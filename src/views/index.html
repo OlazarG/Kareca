@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bodega POS - K-RECA v2.1</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <!-- SweetAlert2 -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f6f9;
+            height: 100vh;
+            overflow: hidden;
+            /* Prevent body scroll, use flex containers */
+        }
+
+        .main-wrapper {
+            display: flex;
+            height: 100%;
+        }
+
+        .sidebar {
+            width: 260px;
+            flex-shrink: 0;
+            background-color: #343a40;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            padding-top: 20px;
+        }
+
+        .sidebar a {
+            color: #cfd2d6;
+            text-decoration: none;
+            display: block;
+            padding: 12px 20px;
+            border-left: 4px solid transparent;
+        }
+
+        .sidebar a:hover,
+        .sidebar a.active {
+            background-color: #495057;
+            color: white;
+            border-left-color: #198754;
+        }
+
+        .content-area {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background-color: #f4f6f9;
+        }
+
+        .card-custom {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            border: none;
+        }
+
+        /* POS Specific */
+        .pos-total-display {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #198754;
+        }
+
+        #pos-search {
+            font-size: 1.2rem;
+            height: 50px;
+        }
+
+        /* Dashboard Specifics */
+        .dash-card {
+            border: none;
+            border-radius: 15px;
+            color: white;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .dash-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .dash-card h5 {
+            font-size: 1rem;
+            opacity: 0.9;
+        }
+
+        .dash-card h3 {
+            font-size: 2.2rem;
+            font-weight: bold;
+        }
+
+        .bg-gradient-success {
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+        }
+
+        .bg-gradient-danger {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+        }
+
+        .bg-gradient-info {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+        }
+
+        .bg-gradient-purple {
+            background: linear-gradient(135deg, #9b59b6, #8e44ad);
+        }
+
+        .icon-bg {
+            position: absolute;
+            right: 15px;
+            bottom: 10px;
+            font-size: 4rem;
+            opacity: 0.2;
+            transform: rotate(-10deg);
+        }
+
+        .low-stock-table td,
+        .low-stock-table th {
+            vertical-align: middle;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="main-wrapper">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <h4 class="text-center mb-4 text-white" style="letter-spacing: 2px; font-weight: 700;">K-RECA POS</h4>
+            <a href="#" onclick="showSection('dashboard')" id="nav-dashboard" class="active"><i
+                    class="bi bi-speedometer2 me-2"></i>Dashboard</a>
+            <a href="#" onclick="showSection('products')" id="nav-products"><i
+                    class="bi bi-box-seam me-2"></i>Productos</a>
+            <a href="#" onclick="showSection('pos')" id="nav-pos"><i class="bi bi-cart4 me-2"></i>Punto de Venta</a>
+            <a href="#" onclick="showSection('purchases')" id="nav-purchases"><i class="bi bi-bag-plus me-2"></i>Punto
+                de Compra</a>
+            <a href="#" onclick="showSection('reports')" id="nav-reports"><i
+                    class="bi bi-file-earmark-bar-graph me-2"></i>Reportes</a>
+            <a href="#" onclick="showSection('caja')" id="nav-caja"><i class="bi bi-wallet2 me-2"></i>Control Caja</a>
+        </div>
+
+        <!-- Main Content -->
+        <div class="content-area">
+
+            <!-- Dashboard Section -->
+            <div id="dashboard-section">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <h2 class="fw-bold text-dark">Panel de Control</h2>
+                        <span class="text-muted" id="dash-date">Cargando fecha...</span>
+                    </div>
+                    <div>
+                        <button class="btn btn-success btn-lg shadow-sm" onclick="showSection('pos')">
+                            <i class="bi bi-plus-circle me-2"></i>Nueva Venta
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Stats Cards -->
+                <div class="row g-4 mb-5">
+                    <div class="col-md-3">
+                        <div class="card dash-card bg-gradient-success p-3">
+                            <i class="bi bi-currency-dollar icon-bg"></i>
+                            <h5>Ventas Hoy</h5>
+                            <h3 id="dash-sales">Gs. 0</h3>
+                            <small class="text-white-50">Ingresos brutos</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card dash-card bg-gradient-danger p-3">
+                            <i class="bi bi-graph-down-arrow icon-bg"></i>
+                            <h5>Gastos Hoy</h5>
+                            <h3 id="dash-expenses">Gs. 0</h3>
+                            <small class="text-white-50">Compras / Salidas</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card dash-card bg-gradient-info p-3">
+                            <i class="bi bi-wallet2 icon-bg"></i>
+                            <h5>Balance</h5>
+                            <h3 id="dash-balance">Gs. 0</h3>
+                            <small class="text-white-50">Neto (Ingreso - Egreso)</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card dash-card bg-gradient-purple p-3">
+                            <i class="bi bi-receipt icon-bg"></i>
+                            <h5>Transacciones</h5>
+                            <h3 id="dash-tx-count">0</h3>
+                            <small class="text-white-50">Movimientos totales</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <!-- Low Stock -->
+                    <div class="col-md-8">
+                        <div class="card card-custom h-100">
+                            <div class="card-header bg-white border-bottom py-3">
+                                <h5 class="card-title mb-0 text-danger"><i
+                                        class="bi bi-exclamation-triangle-fill me-2"></i>Alerta de Stock Bajo (Menos de
+                                    5)</h5>
+                            </div>
+                            <div class="card-body p-0" style="max-height: 350px; overflow-y: auto;">
+                                <table class="table table-hover low-stock-table mb-0">
+                                    <thead class="table-light sticky-top">
+                                        <tr>
+                                            <th>Producto</th>
+                                            <th>Categoría</th>
+                                            <th class="text-center">Stock Actual</th>
+                                            <th class="text-end">Acción</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="dash-low-stock-body">
+                                        <!-- Populated via JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Actions / Info -->
+                    <div class="col-md-4">
+                        <div class="card card-custom h-100 bg-white">
+                            <div class="card-body">
+                                <h5 class="mb-4">Accesos Rápidos</h5>
+                                <div class="d-grid gap-3">
+                                    <button class="btn btn-outline-primary py-3 text-start px-4"
+                                        onclick="showSection('purchases')">
+                                        <i class="bi bi-box-seam me-3 fs-5"></i>Reponer Mercadería
+                                    </button>
+                                    <button class="btn btn-outline-dark py-3 text-start px-4"
+                                        onclick="showSection('products')">
+                                        <i class="bi bi-pencil-square me-3 fs-5"></i>Gestionar Inventario
+                                    </button>
+                                    <button class="btn btn-outline-secondary py-3 text-start px-4"
+                                        onclick="showSection('reports')">
+                                        <i class="bi bi-file-text me-3 fs-5"></i>Ver Reporte Completo
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Products Section -->
+            <div id="products-section" style="display:none;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h2>Inventario</h2>
+                    <button class="btn btn-success" type="button" data-bs-toggle="collapse"
+                        data-bs-target="#newProductForm" id="btn-toggle-form">
+                        + Nuevo Producto
+                    </button>
+                </div>
+
+                <!-- Filters -->
+                <div class="card card-custom p-3 mb-3">
+                    <div class="row g-2">
+                        <div class="col-md-6">
+                            <input type="text" id="search-input" class="form-control"
+                                placeholder="Buscar por Nombre o Código de Barras..." onkeyup="applyFilters()">
+                        </div>
+                        <div class="col-md-3">
+                            <select id="filter-category" class="form-select" onchange="applyFilters()">
+                                <option value="Todas">Todas las Categorías</option>
+                                <option value="Cervezas">Cervezas</option>
+                                <option value="Gaseosas">Gaseosas</option>
+                                <option value="Destilados">Destilados</option>
+                                <option value="Snacks">Snacks</option>
+                                <option value="Cigarrillos">Cigarrillos</option>
+                                <option value="Limpieza">Limpieza</option>
+                                <option value="Varios">Varios</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <select class="form-select" id="products-per-page">
+                                <option value="20" selected>20 por pág</option>
+                                <option value="50">50 por pág</option>
+                                <option value="100">100 por pág</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <button class="btn btn-outline-secondary w-100" onclick="applyFilters()">Buscar</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Product Registration/Edit Form -->
+                <div class="collapse mb-3" id="newProductForm">
+                    <div class="card card-custom p-4 border-success">
+                        <h4 id="form-title">Registrar Nuevo Producto</h4>
+                        <form id="product-form">
+                            <input type="hidden" id="edit-prod-id"> <!-- Hidden ID for Edit Mode -->
+
+                            <!-- Base Info -->
+                            <div class="row mb-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">Nombre del Producto</label>
+                                    <input type="text" class="form-control" id="prod-name" required
+                                        placeholder="Ej: Brahma 1L">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Categoría</label>
+                                    <select class="form-select" id="prod-category">
+                                        <option value="Cervezas">Cervezas</option>
+                                        <option value="Gaseosas">Gaseosas</option>
+                                        <option value="Destilados">Destilados</option>
+                                        <option value="Snacks">Snacks</option>
+                                        <option value="Cigarrillos">Cigarrillos</option>
+                                        <option value="Limpieza">Limpieza</option>
+                                        <option value="Varios">Varios</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Costo Base</label>
+                                    <input type="text" class="form-control currency-input" id="prod-base-cost" required
+                                        placeholder="0">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">Stock Actual</label>
+                                    <input type="number" class="form-control" id="prod-stock" value="0" min="0"
+                                        required>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">Stock Mín.</label>
+                                    <input type="number" class="form-control" id="prod-min-stock" value="5" min="0"
+                                        required>
+                                </div>
+                            </div>
+
+                            <hr>
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h5>Presentaciones / Variantes</h5>
+                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addVariantRow()">+
+                                    Agregar Presentación</button>
+                            </div>
+
+                            <table class="table table-bordered">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Nombre (Ej: Pack)</th>
+                                        <th>Código Barras</th>
+                                        <th style="width: 15%">Cantidad</th>
+                                        <th>Precio Venta</th>
+                                        <th style="width: 50px"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="variants-body">
+                                    <tr class="variant-row">
+                                        <td><input type="text" class="form-control" value="Unidad" required
+                                                name="v-name"></td>
+                                        <td><input type="text" class="form-control" required name="v-code"
+                                                placeholder="Código"></td>
+                                        <td><input type="number" class="form-control" value="1" min="1" required
+                                                name="v-gkty" readonly></td>
+                                        <td><input type="text" class="form-control currency-input" required
+                                                name="v-price" placeholder="0"></td>
+                                        <td></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+
+                            <div class="d-flex gap-2 mt-3">
+                                <button type="submit" class="btn btn-success" id="btn-save">Guardar Producto</button>
+                                <button type="button" class="btn btn-warning" id="btn-cancel-edit" style="display:none;"
+                                    onclick="resetForm()">Cancelar Edición</button>
+                                <button type="button" class="btn btn-secondary" onclick="resetForm()">Limpiar</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Products Table -->
+                <div class="card card-custom">
+                    <div class="card-body">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Código</th>
+                                    <th>Producto</th>
+                                    <th>Categoría</th>
+                                    <th>Presentaciones</th>
+                                    <th>Stock</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="products-table-body">
+                                <!-- Products will be loaded here -->
+                            </tbody>
+                        </table>
+                        <!-- Pagination -->
+                        <div id="products-pagination" class="d-flex justify-content-center py-3"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- POS Section -->
+            <div id="pos-section" style="display:none;">
+                <div class="row">
+                    <!-- Left: Search & Table -->
+                    <div class="col-md-8">
+                        <div class="card card-custom p-3 mb-3">
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="bi bi-upc-scan"></i></span>
+                                <input type="text" id="pos-search" class="form-control"
+                                    placeholder="Escanear o buscar producto..." autofocus>
+                                <button class="btn btn-primary" type="button" onclick="posSearch()">Agregar</button>
+                            </div>
+                        </div>
+
+                        <div class="card card-custom" style="height: 400px; overflow-y: auto; margin-bottom: 20px;">
+                            <h6 class="p-3 border-bottom mb-0 bg-light fw-bold">Carrito Actual</h6>
+                            <table class="table table-striped align-middle mb-0">
+                                <thead class="table-dark sticky-top">
+                                    <tr>
+                                        <th>Producto</th>
+                                        <th>Precio</th>
+                                        <th style="width: 120px">Cantidad</th>
+                                        <th>Subtotal</th>
+                                        <th style="width: 50px"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pos-cart-body">
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Simplified Sales History -->
+                        <div class="card card-custom">
+                            <div
+                                class="card-header bg-secondary text-white d-flex justify-content-between align-items-center py-1">
+                                <small class="mb-0">Ventas Hoy</small>
+                                <button class="btn btn-sm btn-link text-white p-0" onclick="loadPosHistory()"><i
+                                        class="bi bi-arrow-clockwise"></i></button>
+                            </div>
+                            <div style="height: 200px; overflow-y: auto;">
+                                <table class="table table-sm table-hover mb-0" style="font-size: 0.85rem;">
+                                    <thead class="table-light sticky-top">
+                                        <tr>
+                                            <th style="width: 120px;">Hora</th>
+                                            <th>Detalle Productos</th>
+                                            <th style="width: 150px;" class="text-end">Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="pos-history-body">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- Right: Totals & Checkout -->
+                    <div class="col-md-4">
+                        <div class="card card-custom bg-white p-4 h-100 d-flex flex-column justify-content-between">
+                            <div>
+                                <h4>Resumen de Venta</h4>
+                                <hr>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span>Items:</span>
+                                    <span class="fw-bold" id="pos-item-count">0</span>
+                                </div>
+                                <hr>
+                                <div class="text-end">
+                                    <small class="text-muted">Total a Pagar</small>
+                                    <div class="pos-total-display" id="pos-total">Gs. 0</div>
+                                </div>
+                            </div>
+
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-success btn-lg py-3" onclick="initiateCheckout()">
+                                    <i class="bi bi-cash-coin me-2"></i> COBRAR
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="clearCart()">
+                                    Cancelar Venta
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Purchases Section -->
+            <div id="purchases-section" style="display:none;">
+                <h3 class="mb-4 text-primary">Punto de Compra <small class="text-muted fs-6">(Reposición de
+                        Stock)</small></h3>
+                <div class="row">
+                    <!-- Left: Search & Table -->
+                    <div class="col-md-8">
+                        <div class="card card-custom p-3 mb-3 border-primary">
+                            <div class="input-group">
+                                <span class="input-group-text bg-primary text-white"><i class="bi bi-search"></i></span>
+                                <input type="text" id="purchases-search" class="form-control"
+                                    placeholder="Buscar producto para comprar..." autofocus>
+                                <button class="btn btn-primary" type="button" onclick="purchaseSearch()">Agregar a
+                                    Compra</button>
+                            </div>
+                        </div>
+
+                        <div class="card card-custom" style="height: 500px; overflow-y: auto;">
+                            <h6 class="p-3 border-bottom mb-0 bg-light fw-bold text-primary">Carrito de Compra</h6>
+                            <table class="table table-striped align-middle mb-0">
+                                <thead class="table-primary sticky-top">
+                                    <tr>
+                                        <th>Producto</th>
+                                        <th>Costo Unit. (Gs)</th>
+                                        <th style="width: 120px">Cantidad</th>
+                                        <th>Subtotal</th>
+                                        <th style="width: 50px"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="purchases-cart-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Right: Totals & Checkout -->
+                    <div class="col-md-4">
+                        <div class="card card-custom bg-white p-4 h-100 d-flex flex-column">
+                            <div>
+                                <h4>Resumen de Compra</h4>
+                                <hr>
+                                <div class="mb-3">
+                                    <label class="form-label text-muted">Proveedor (Opcional)</label>
+                                    <input type="text" class="form-control" id="purchase-supplier"
+                                        placeholder="Ej: Distribuidora Sol">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label text-muted">Método de Pago</label>
+                                    <select class="form-select" id="purchase-method">
+                                        <option value="Efectivo" selected>Efectivo</option>
+                                        <option value="Transferencia">Transferencia</option>
+                                        <option value="QR">QR</option>
+                                        <option value="Tarjeta">Tarjeta</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label text-muted">Observación (Opcional)</label>
+                                    <textarea class="form-control" id="purchase-observation" rows="2"
+                                        placeholder="Ej: Compra de urgencia..."></textarea>
+                                </div>
+                                <hr>
+                                <div class="text-end mb-4">
+                                    <small class="text-muted">Total Compra (Egreso)</small>
+                                    <div class="pos-total-display text-primary" id="purchase-total">Gs. 0</div>
+                                </div>
+                            </div>
+
+                            <div class="mt-auto d-grid gap-2">
+                                <button class="btn btn-primary btn-lg py-3" onclick="confirmPurchase()">
+                                    <i class="bi bi-bag-plus me-2"></i> CONFIRMAR COMPRA
+                                </button>
+                                <button class="btn btn-outline-secondary" onclick="clearPurchaseCart()">
+                                    Limpiar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Reports Section -->
+            <div id="reports-section" style="display:none;">
+                <!-- Header / Stats -->
+                <div class="card bg-dark text-white mb-3 rounded-0 px-3 py-3 sticky-top shadow-sm"
+                    style="z-index: 1020; top: 0;">
+                    <div class="d-flex flex-row justify-content-between align-items-center">
+                        <h5 class="m-0 text-white"><i class="bi bi-table me-2"></i>Planilla de Movimientos</h5>
+
+                        <div class="d-flex align-items-center gap-4" style="font-size: 0.9rem;">
+                            <span class="text-white-50">Total Ingresos: <span class="text-success fw-bold ms-1"
+                                    id="stat-ingresos">Gs. 0</span></span>
+                            <span class="text-white-50">Total Egresos: <span class="text-danger fw-bold ms-1"
+                                    id="stat-egresos">Gs. 0</span></span>
+                            <span class="text-white-50">Saldo Total: <span class="text-white fw-bold ms-1"
+                                    id="stat-saldo">Gs. 0</span></span>
+                            <span class="text-white-50 border-start ps-4">Efectivo en Caja: <span
+                                    class="text-info fw-bold ms-1" id="stat-cash-box">Gs. 0</span></span>
+                            <span class="text-white-50">Ingreso Digital: <span class="text-warning fw-bold ms-1"
+                                    id="stat-digital">Gs. 0</span></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filters -->
+                <div class="card card-custom p-3 mb-3 bg-light">
+                    <div class="row g-2 align-items-center">
+                        <div class="col-auto"><label class="fw-bold text-muted">Desde:</label></div>
+                        <div class="col-auto">
+                            <input type="date" class="form-control" id="report-date-from">
+                        </div>
+                        <div class="col-auto"><label class="fw-bold text-muted">Hasta:</label></div>
+                        <div class="col-auto">
+                            <input type="date" class="form-control" id="report-date-to">
+                        </div>
+                        <div class="col-auto">
+                            <button class="btn btn-primary" onclick="loadReports()"><i
+                                    class="bi bi-funnel-fill me-1"></i>Filtrar</button>
+                            <button class="btn btn-success ms-2" onclick="exportReports()"><i
+                                    class="bi bi-file-earmark-excel-fill me-1"></i>Exportar CSV</button>
+                            <button class="btn btn-primary ms-2" onclick="exportReportsWord()"><i
+                                    class="bi bi-file-earmark-word-fill me-1"></i>Exportar Word</button>
+                            <button class="btn btn-warning ms-2" onclick="testDbConnection()"><i
+                                    class="bi bi-bug-fill me-1"></i>Test DB</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Table -->
+                <div class="card card-custom">
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-striped table-hover m-0" style="font-size: 0.9rem;">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Fecha</th>
+                                    <th>Tipo</th>
+                                    <th>Descripción / Nombre</th>
+                                    <th>Motivo (Detalle)</th>
+                                    <th>Usuario</th>
+                                    <th>Método</th>
+                                    <th>Ingreso</th>
+                                    <th>Egreso</th>
+                                    <th>Saldo Acumulado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="reports-table-body">
+                                <!-- Data -->
+                            </tbody>
+                        </table>
+                        <!-- Pagination -->
+                        <div id="reports-pagination" class="d-flex justify-content-center py-3"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cash Register Section -->
+            <div id="caja-section" style="display:none;">
+                <h2 class="mb-4">Gestión de Caja</h2>
+
+                <!-- View A: Open Register -->
+                <div id="caja-view-open" style="display:none;">
+                    <div class="row justify-content-center">
+                        <div class="col-md-6">
+                            <div class="card card-custom border-primary">
+                                <div class="card-header bg-primary text-white text-center py-3">
+                                    <h4 class="mb-0"><i class="bi bi-safe me-2"></i>Apertura de Caja</h4>
+                                </div>
+                                <div class="card-body p-5">
+                                    <p class="text-muted text-center mb-4">Ingrese el monto de dinero físico presente en
+                                        la caja para iniciar el turno.</p>
+                                    <div class="mb-4">
+                                        <label class="form-label fw-bold">Monto Inicial (Gs.)</label>
+                                        <input type="text" id="caja-initial-amount"
+                                            class="form-control form-control-lg currency-input text-center"
+                                            placeholder="0">
+                                    </div>
+                                    <div class="d-grid">
+                                        <button class="btn btn-primary btn-lg" onclick="openRegister()">ABRIR
+                                            CAJA</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- View B: Active Session / Close Register -->
+                <div id="caja-view-active" style="display:none;">
+
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h4><i class="bi bi-cash-stack me-2"></i>Cierre de Caja Diario</h4>
+                        <span class="badge bg-success fs-6">Sesión Abierta</span>
+                    </div>
+
+                    <!-- 3 Cards Row -->
+                    <div class="row g-4 mb-5">
+                        <!-- Physical Cash Expected -->
+                        <div class="col-md-4">
+                            <div class="card border-0 shadow-sm"
+                                style="background-color: #e3f2fd; border-left: 5px solid #2196f3 !important;">
+                                <div class="card-body">
+                                    <small class="text-primary fw-bold text-uppercase">Dinero Físico Esperado</small>
+                                    <h2 class="fw-bold text-dark my-2" id="close-expected-cash">Gs. 0</h2>
+                                    <small class="text-muted">(Inicial + Ingresos Ef. - Egresos Ef.)</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Digital Expected -->
+                        <div class="col-md-4">
+                            <div class="card border-0 shadow-sm"
+                                style="background-color: #f3e5f5; border-left: 5px solid #9c27b0 !important;">
+                                <div class="card-body">
+                                    <small class="text-purple fw-bold text-uppercase" style="color: #9c27b0;">Total
+                                        Digital Esperado</small>
+                                    <h2 class="fw-bold text-dark my-2" id="close-expected-digital">Gs. 0</h2>
+                                    <small class="text-muted">(POS, Transferencias, QR)</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Total Theoretical -->
+                        <div class="col-md-4">
+                            <div class="card border-0 shadow-sm"
+                                style="background-color: #e8f5e9; border-left: 5px solid #4caf50 !important;">
+                                <div class="card-body">
+                                    <small class="text-success fw-bold text-uppercase">Saldo Teórico Total</small>
+                                    <h2 class="fw-bold text-dark my-2" id="close-expected-total">Gs. 0</h2>
+                                    <small class="text-muted">Acumulado del día</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Verification Section -->
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-header bg-white border-bottom py-3">
+                            <h5 class="mb-0 fw-bold"><span class="badge bg-dark rounded-circle me-2">1</span>
+                                Verificación de Efectivo</h5>
+                        </div>
+                        <div class="card-body p-4">
+                            <p class="text-muted mb-4">Por favor, cuenta el dinero físico en tu caja e ingrésalo abajo.
+                                El sistema calculará automáticamente si hay diferencias.</p>
+
+                            <div class="row mb-4">
+                                <div class="col-md-4">
+                                    <label class="form-label fw-bold">Efectivo Real en Caja (Lo que contaste)</label>
+                                    <div class="input-group input-group-lg">
+                                        <span class="input-group-text bg-light">Gs.</span>
+                                        <input type="text" id="caja-final-amount"
+                                            class="form-control currency-input fw-bold" placeholder="0">
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label fw-bold">Diferencia (Sobrante/Faltante)</label>
+                                    <div class="form-control form-control-lg bg-light border-0 fw-bold"
+                                        id="close-diff-display">-</div>
+                                </div>
+                            </div>
+
+                            <div class="mb-4">
+                                <label class="form-label">Observaciones del Cierre</label>
+                                <textarea id="close-notes" class="form-control" rows="2"
+                                    placeholder="Ej: Faltante de 500 Gs cubierto por cajero..."></textarea>
+                            </div>
+
+                            <hr class="my-4">
+
+                            <button class="btn btn-primary btn-lg px-5" onclick="closeRegister()">
+                                <i class="bi bi-check-circle-fill me-2"></i> Confirmar y Guardar Cierre
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+    </div>
+    </div>
+
+    <!-- Payment Modal -->
+    <div class="modal fade" id="paymentModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title">Finalizar Venta</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="text-center mb-4">
+                        <h2 class="fw-bold text-success" id="modal-total-display">Gs. 0</h2>
+                        <small class="text-muted">Total a Pagar</small>
+                    </div>
+
+                    <form id="payment-form">
+                        <div class="mb-3">
+                            <label class="form-label">Método de Pago</label>
+                            <select class="form-select form-select-lg" id="payment-method"
+                                onchange="togglePaymentInputs()">
+                                <option value="Efectivo" selected>Efectivo</option>
+                                <option value="QR">QR</option>
+                                <option value="Transferencia">Transferencia</option>
+                            </select>
+                        </div>
+
+                        <!-- Cash Section -->
+                        <div id="cash-payment-section">
+                            <div class="mb-3">
+                                <label class="form-label">Monto Recibido</label>
+                                <input type="text" class="form-control form-control-lg currency-input"
+                                    id="amount-received" placeholder="0" oninput="calculateChange()">
+                            </div>
+                            <div class="alert alert-secondary d-flex justify-content-between align-items-center">
+                                <span>Vuelto:</span>
+                                <span class="fw-bold fs-4" id="change-display">Gs. 0</span>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label text-muted">Observación (Opcional)</label>
+                            <textarea class="form-control" id="pos-observation" rows="2"
+                                placeholder="Ej: Cliente frecuente..."></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-success btn-lg" onclick="processSale()">Confirmar
+                        Venta</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Sale Modal -->
+    <div class="modal fade" id="editSaleModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title">Editar Venta / Movimiento</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="edit-sale-id">
+                    <input type="hidden" id="edit-sale-details">
+
+                    <div class="mb-3">
+                        <label class="form-label">Escenario de Edición</label>
+                        <select class="form-select" id="edit-scenario" onchange="toggleEditScenario()">
+                            <option value="correction" selected>Corrección de Monto</option>
+                            <option value="refund">Reembolso / Devolución</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Nuevo Monto</label>
+                        <input type="text" class="form-control currency-input" id="edit-sale-amount" required>
+                    </div>
+
+                    <!-- Restock Section -->
+                    <div id="restock-section" style="display: none;" class="mb-3 border p-3 rounded bg-light">
+                        <h6 class="text-danger"><i class="bi bi-box-seam me-2"></i>Devolución de Productos</h6>
+                        <p class="small text-muted mb-2" id="edit-note-text">Seleccione los productos que retornan al
+                            stock:</p>
+                        <div id="restock-items-container" style="max-height: 150px; overflow-y: auto;">
+                            <!-- Checkboxes injected via JS -->
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Motivo de Edición (Obligatorio)</label>
+                        <textarea class="form-control" id="edit-sale-reason" rows="3" required
+                            placeholder="Ej: Devolución parcial, Error de cobro..."></textarea>
+                    </div>
+                    <div class="alert alert-info py-2" style="font-size: 0.9rem;">
+                        <i class="bi bi-info-circle me-1"></i> <strong>Nota:</strong> <span id="edit-note-text">Esta
+                            acción solo corrige el monto financiero.</span>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-warning" onclick="confirmEditSale()">Guardar Cambios</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Renderer Script -->
+    <script src="./renderer.js?v=2.2"></script>
+</body>
+
+</html>

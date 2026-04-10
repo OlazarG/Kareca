@@ -10,7 +10,7 @@ window.electronAPI = {
         const res = await fetch(`/api/products/${id}`);
         return await res.json();
     },
-    createProductWithVariants: async ({ productData, variants }) => {
+    createProductWithVariants: async (productData, variants) => {
         const res = await fetch('/api/products', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

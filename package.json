@@ -4,7 +4,9 @@
   "description": "Desktop Application for Bodega POS System",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "node server.js",
+    "dev": "node server.js",
+    "electron": "electron .",
     "build": "electron-builder"
   },
   "build": {
@@ -42,9 +44,12 @@
     "electron-builder": "^26.4.0"
   },
   "dependencies": {
+    "compression": "^1.8.1",
+    "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "escpos": "^3.0.0-alpha.6",
     "escpos-usb": "^3.0.0-alpha.4",
+    "express": "^5.2.1",
     "pg": "^8.16.3"
   }
 }

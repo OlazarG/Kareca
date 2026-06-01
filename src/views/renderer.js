@@ -33,8 +33,86 @@ function getLocalDateStr(date = new Date()) {
     return `${year}-${month}-${day}`;
 }
 
+async function loadCategories() {
+    try {
+        const categories = await window.electronAPI.getCategories();
+
+        // Populate filter-category
+        const filterSelect = document.getElementById('filter-category');
+        if (filterSelect) {
+            const currentValue = filterSelect.value;
+            filterSelect.innerHTML = '<option value="Todas">Todas las Categorías</option>';
+            categories.forEach(cat => {
+                filterSelect.innerHTML += `<option value="${cat}">${cat}</option>`;
+            });
+            // Restore selection if it still exists
+            filterSelect.value = currentValue || 'Todas';
+        }
+
+        // Populate prod-category
+        const prodSelect = document.getElementById('prod-category');
+        if (prodSelect) {
+            const currentValue = prodSelect.value;
+            prodSelect.innerHTML = '';
+            categories.forEach(cat => {
+                prodSelect.innerHTML += `<option value="${cat}">${cat}</option>`;
+            });
+            if (currentValue && categories.includes(currentValue)) {
+                prodSelect.value = currentValue;
+            }
+        }
+    } catch (error) {
+        console.error("Error loading categories:", error);
+    }
+}
+
+async function promptCreateCategory() {
+    const { value: categoryName } = await Swal.fire({
+        title: 'Nueva Categoría',
+        input: 'text',
+        inputLabel: 'Nombre de la nueva categoría',
+        inputPlaceholder: 'Ej: Dijes',
+        showCancelButton: true,
+        cancelButtonText: 'Cancelar',
+        confirmButtonText: 'Crear',
+        confirmButtonColor: '#198754',
+        inputValidator: (value) => {
+            if (!value || !value.trim()) {
+                return '¡Debes ingresar un nombre!';
+            }
+        }
+    });
+
+    if (categoryName) {
+        try {
+            const cleanName = categoryName.trim();
+            await window.electronAPI.createCategory(cleanName);
+            Swal.fire({
+                toast: true,
+                position: 'top-end',
+                icon: 'success',
+                title: `Categoría "${cleanName}" creada`,
+                timer: 1500,
+                showConfirmButton: false
+            });
+            // Reload categories in dropdowns
+            await loadCategories();
+
+            // Auto-select the newly created category in the product form
+            const prodSelect = document.getElementById('prod-category');
+            if (prodSelect) {
+                prodSelect.value = cleanName;
+            }
+        } catch (error) {
+            console.error("Error creating category:", error);
+            Swal.fire('Error', 'No se pudo crear la categoría.', 'error');
+        }
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     setupCurrencyInputs();
+    loadCategories(); // Carga las categorías dinámicamente al inicio
 
     // POS Search Listener
     document.getElementById('pos-search')?.addEventListener('keypress', (e) => {
@@ -836,6 +914,29 @@ async function loadReports(page = 1) {
             document.getElementById('stat-saldo').innerText = `Gs. ${formatCurrency(balance).replace('Gs.', '').trim()}`;
         }
 
+        // Calculate Cash in box and Digital Income from movements list
+        let cashBox = 0;
+        let digital = 0;
+        movements.forEach(m => {
+            const amt = parseInt(m.amount) || 0;
+            if (m.type === 'APERTURA') {
+                cashBox += amt;
+            } else if (m.type === 'INGRESO') {
+                if (m.payment_method === 'Efectivo') {
+                    cashBox += amt;
+                } else {
+                    digital += amt;
+                }
+            } else if (m.type === 'EGRESO') {
+                if (m.payment_method === 'Efectivo' || !m.payment_method) {
+                    cashBox -= amt;
+                }
+            }
+        });
+
+        document.getElementById('stat-cash-box').innerText = `Gs. ${formatCurrency(cashBox).replace('Gs.', '').trim()}`;
+        document.getElementById('stat-digital').innerText = `Gs. ${formatCurrency(digital).replace('Gs.', '').trim()}`;
+
         tbody.innerHTML = '';
 
         if (movements.length === 0) {
@@ -1111,7 +1212,9 @@ async function processSale() {
         method: method,
         user: 'Cajero Default', // TODO: User Login
         clientName: 'CLIENTE OCASIONAL', // TODO: Client Input
-        observation: document.getElementById('pos-observation').value // Send Observation
+        observation: document.getElementById('pos-observation').value, // Send Observation
+        received: received,
+        change: (received - currentTotal) > 0 ? (received - currentTotal) : 0
     };
 
     try {
@@ -1131,11 +1234,14 @@ async function processSale() {
 
             // Print Ticket
             const ticketData = {
-                storeName: 'BODEGA K-RECA',
+                id: result.id,
+                storeName: 'Aurea Accesorios',
                 items: saleData.items,
                 total: saleData.total,
                 method: saleData.method,
-                date: new Date().toLocaleString('es-PY')
+                date: new Date().toLocaleString('es-PY'),
+                received: saleData.received,
+                change: saleData.change
             };
 
             // Fire and forget print (don't await strictly to block UI, but good to know if it fails)
@@ -1534,7 +1640,8 @@ function toggleEditScenario() {
 
         if (detailsJson && detailsJson !== 'null' && detailsJson !== 'undefined') {
             try {
-                const items = JSON.parse(detailsJson);
+                const parsed = JSON.parse(detailsJson);
+                const items = Array.isArray(parsed) ? parsed : (parsed.items || []);
                 if (items.length > 0) {
                     items.forEach((item, index) => {
                         const div = document.createElement('div');
@@ -1582,7 +1689,8 @@ async function confirmEditSale() {
     let restockItems = [];
     if (scenario === 'refund' && detailsJson) {
         try {
-            const allItems = JSON.parse(detailsJson);
+            const parsed = JSON.parse(detailsJson);
+            const allItems = Array.isArray(parsed) ? parsed : (parsed.items || []);
             const checkboxes = document.querySelectorAll('.restock-check:checked');
             checkboxes.forEach(cb => {
                 const index = parseInt(cb.value);
@@ -1643,8 +1751,17 @@ async function reprintTicket(id) {
         }
 
         let items = [];
+        let received = undefined;
+        let change = undefined;
         try {
-            items = JSON.parse(sale.details_json || '[]');
+            const parsed = JSON.parse(sale.details_json || '[]');
+            if (Array.isArray(parsed)) {
+                items = parsed;
+            } else {
+                items = parsed.items || [];
+                received = parsed.received;
+                change = parsed.change;
+            }
         } catch (e) {
             console.error("Error parsing details for reprint", e);
         }
@@ -1655,11 +1772,14 @@ async function reprintTicket(id) {
         }
 
         const ticketData = {
-            storeName: 'BODEGA K-RECA',
+            id: sale.id,
+            storeName: 'Aurea Accesorios',
             items: items,
             total: sale.amount,
             method: sale.payment_method,
-            date: new Date(sale.date).toLocaleString('es-PY')
+            date: new Date(sale.date).toLocaleString('es-PY'),
+            received: received,
+            change: change
         };
 
         const res = await window.electronAPI.printTicket(ticketData);

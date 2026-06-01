@@ -9,9 +9,20 @@ const pool = new Pool({
     port: process.env.DB_PORT,
 });
 
+
+
 pool.on('error', (err, client) => {
     console.error('Unexpected error on idle client', err);
     process.exit(-1);
+});
+
+pool.on('connect', (client) => {
+    const localTZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    if (/^[a-zA-Z0-9_\-\/]+$/.test(localTZ)) {
+        client.query(`SET timezone = '${localTZ}'`);
+    } else {
+        client.query("SET timezone = 'UTC'");
+    }
 });
 
 // Initialize Database Schema
@@ -30,9 +41,27 @@ async function initDatabase() {
                 base_cost DECIMAL(15, 2) NOT NULL,
                 stock_total INTEGER DEFAULT 0,
                 min_stock INTEGER DEFAULT 5, -- Custom Limit
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
         `);
+
+        // Table: categories
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS categories (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100) UNIQUE NOT NULL
+            );
+        `);
+
+        // Seed default categories if empty
+        const checkCategories = await client.query('SELECT COUNT(*) FROM categories');
+        if (parseInt(checkCategories.rows[0].count) === 0) {
+            console.log("Seeding default categories...");
+            const defaultCats = ['Aros', 'Collares', 'Cadenas', 'Pulseras', 'Brazaletes', 'Anillos', 'Set', 'Cintos', 'Relojes', 'Hebillas', 'Varios'];
+            for (const cat of defaultCats) {
+                await client.query('INSERT INTO categories (name) VALUES ($1) ON CONFLICT DO NOTHING', [cat]);
+            }
+        }
 
         // Check if min_stock column exists (migration for existing)
         const checkCol = await client.query("SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='min_stock'");
@@ -65,7 +94,7 @@ async function initDatabase() {
         await client.query(`
             CREATE TABLE IF NOT EXISTS movements (
                 id SERIAL PRIMARY KEY,
-                date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                 type VARCHAR(20) NOT NULL, -- 'INGRESO', 'EGRESO'
                 description VARCHAR(255),
                 motive TEXT, -- JSON string or text detailing items
@@ -96,7 +125,7 @@ async function initDatabase() {
         await client.query(`
             CREATE TABLE IF NOT EXISTS ventas (
                 id SERIAL PRIMARY KEY,
-                fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                fecha TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                 total DECIMAL(15, 2) NOT NULL
             );
         `);
@@ -118,7 +147,7 @@ async function initDatabase() {
                 id SERIAL PRIMARY KEY,
                 descripcion TEXT NOT NULL,
                 monto DECIMAL(15, 2) NOT NULL,
-                fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                fecha TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
         `);
 
@@ -126,8 +155,8 @@ async function initDatabase() {
         await client.query(`
             CREATE TABLE IF NOT EXISTS cash_sessions (
                 id SERIAL PRIMARY KEY,
-                opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                closed_at TIMESTAMP,
+                opened_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                closed_at TIMESTAMPTZ,
                 initial_cash DECIMAL(15,2) DEFAULT 0,
                 final_cash DECIMAL(15,2) DEFAULT 0,
                 total_sales_cash DECIMAL(15,2) DEFAULT 0,
@@ -154,6 +183,14 @@ async function initDatabase() {
         if (checkSessionUser.rows.length === 0) {
             await client.query("ALTER TABLE cash_sessions ADD COLUMN user_name VARCHAR(100)");
         }
+
+        // Migrations: TIMESTAMP -> TIMESTAMPTZ for existing tables
+        await client.query(`ALTER TABLE movements ALTER COLUMN date TYPE TIMESTAMPTZ USING date AT TIME ZONE 'UTC'`);
+        await client.query(`ALTER TABLE ventas ALTER COLUMN fecha TYPE TIMESTAMPTZ USING fecha AT TIME ZONE 'UTC'`);
+        await client.query(`ALTER TABLE egresos ALTER COLUMN fecha TYPE TIMESTAMPTZ USING fecha AT TIME ZONE 'UTC'`);
+        await client.query(`ALTER TABLE cash_sessions ALTER COLUMN opened_at TYPE TIMESTAMPTZ USING opened_at AT TIME ZONE 'UTC'`);
+        await client.query(`ALTER TABLE cash_sessions ALTER COLUMN closed_at TYPE TIMESTAMPTZ USING closed_at AT TIME ZONE 'UTC'`);
+        await client.query(`ALTER TABLE products ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC'`);
 
         await client.query('COMMIT');
         console.log("Database schema initialized (Tables Recreated).");
@@ -411,7 +448,11 @@ async function processSaleTransaction(saleData) {
             saleData.user || 'Cajero',
             saleData.method,
             saleData.total,
-            JSON.stringify(saleData.items)
+            JSON.stringify({
+                items: saleData.items,
+                received: saleData.received,
+                change: saleData.change
+            })
         ]);
 
         await client.query('COMMIT');
@@ -609,22 +650,21 @@ async function closeRegister(finalCash, user) {
         });
 
         // 3. Close Session
-        const now = new Date();
         const expectedCash = parseInt(session.initial_cash) + salesCash - expenses;
         const diff = finalCash - expectedCash;
 
         await client.query(`
                 UPDATE cash_sessions 
-                SET closed_at = $1, 
-                    final_cash = $2, 
-                    total_sales_cash = $3, 
-                    total_sales_other = $4, 
-                    total_expenses = $5, 
-                    income_difference = $6, 
+                SET closed_at = CURRENT_TIMESTAMP, 
+                    final_cash = $1, 
+                    total_sales_cash = $2, 
+                    total_sales_other = $3, 
+                    total_expenses = $4, 
+                    income_difference = $5, 
                     status = 'CLOSED',
-                    user_name = $7 
-                WHERE id = $8
-            `, [now, finalCash, salesCash, salesOther, expenses, diff, user, session.id]);
+                    user_name = $6 
+                WHERE id = $7
+            `, [finalCash, salesCash, salesOther, expenses, diff, user, session.id]);
 
         // 4. Register Movement (CIERRE)
         // We record the declared final cash.
@@ -724,6 +764,26 @@ async function getMovementById(id) {
     }
 }
 
+async function getCategories() {
+    try {
+        const res = await pool.query('SELECT name FROM categories ORDER BY id ASC');
+        return res.rows.map(r => r.name);
+    } catch (e) {
+        console.error("Get Categories Error", e);
+        throw e;
+    }
+}
+
+async function createCategory(name) {
+    try {
+        await pool.query('INSERT INTO categories (name) VALUES ($1) ON CONFLICT DO NOTHING', [name]);
+        return { success: true };
+    } catch (e) {
+        console.error("Create Category Error", e);
+        throw e;
+    }
+}
+
 module.exports = {
     initDatabase,
     pool,
@@ -739,5 +799,7 @@ module.exports = {
     openRegister,
     closeRegister,
     updateMovement,
-    getMovementById
+    getMovementById,
+    getCategories,
+    createCategory
 };

@@ -22,5 +22,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // Edit Sale
     updateMovement: (data) => ipcRenderer.invoke('update-movement', data),
-    getMovementDetails: (id) => ipcRenderer.invoke('get-movement-details', id)
+    getMovementDetails: (id) => ipcRenderer.invoke('get-movement-details', id),
+
+    // Categories
+    getCategories: () => ipcRenderer.invoke('get-categories'),
+    createCategory: (name) => ipcRenderer.invoke('create-category', name)
 });

@@ -1,6 +1,4 @@
-const path = require('path');
 const escpos = require('escpos');
-// install escpos-usb adapter
 try {
     escpos.USB = require('./usbAdapter');
 } catch (e) {
@@ -30,8 +28,8 @@ function getPrinter() {
     throw new Error(`Could not find printer.\nAttempts:\n${errors.join('\n')}`);
 }
 
-// Helper para alinear texto a la izquierda y derecha en la misma línea
-function formatLine(leftText, rightText, width = 42) {
+// Helper para alinear texto a la izquierda y derecha en la misma linea
+function formatLine(leftText, rightText, width = 40) {
     const spaceCount = width - leftText.length - rightText.length;
     if (spaceCount > 0) {
         return leftText + ' '.repeat(spaceCount) + rightText;
@@ -39,33 +37,23 @@ function formatLine(leftText, rightText, width = 42) {
     return leftText + ' ' + rightText;
 }
 
-// Imprime el cuerpo del ticket con los datos reales de la venta
+// Helper para imprimir el cuerpo del ticket y evitar duplicación
 function printTicketBody(printer, dashes, data, lineWidth) {
-    const storeName = data.storeName || 'Aurea Accesorios';
-    const storeSubtitle = data.storeSubtitle || 'Ventas Minoristas Y Mayoristas';
-    const storePhone = data.storePhone || 'WhatsApp:0987122835';
-    const ticketNum = data.ticketNum || data.id || '1';
-    const dateStr = data.date || new Date().toLocaleString('es-PY');
-    const items = data.items || [];
-    const total = data.total;
-    const subtotalStr = total !== undefined
-        ? total.toLocaleString('es-PY')
-        : (data.subtotal || '0');
-
     printer
-        .font('b')
-        .align('ct')
         .style('b')
         .size(0, 0) // Tamaño mínimo absoluto
-        .text(storeName)
+        .text('Aurea Accesorios')
         .style('n')
-        .text(storeSubtitle)
-        .text(storePhone)
+        .text('Ventas Minoristas Y Mayoristas')
+        .text('WhatsApp:0987122835')
         .text(dashes)
 
         // Sección de Ticket y Fecha
         .align('lt')
         .style('b');
+
+    const ticketNum = data.ticketNum || '3';
+    const dateStr = data.date || new Date().toLocaleString('es-PY');
 
     printer.text(formatLine(`Ticket #${ticketNum}`, dateStr, lineWidth));
 
@@ -73,29 +61,32 @@ function printTicketBody(printer, dashes, data, lineWidth) {
         .style('n')
         .text(dashes);
 
-    // Items
+    // Sección de Items
+    const items = data.items || [
+        { name: 'Veg Burger', qty: 1, price: 478 }
+    ];
+
     items.forEach(item => {
-        const itemTotal = item.total !== undefined
-            ? item.total.toLocaleString('es-PY')
-            : (item.price * item.qty).toLocaleString('es-PY');
         const displayName = item.variant_name && item.variant_name.toLowerCase() !== 'unidad'
             ? `${item.name} (${item.variant_name})`
             : item.name;
         const left = `${displayName} x ${item.qty}`;
-        printer.text(formatLine(left, itemTotal, lineWidth));
+        const right = item.price.toString();
+        printer.text(formatLine(left, right, lineWidth));
     });
 
     printer
         .text(dashes)
         .style('b')
-        .text(formatLine('SubTotal', subtotalStr + ' Gs', lineWidth))
+        .text(formatLine('SubTotal', data.subtotal ? data.subtotal + ' Gs' : '5.500 Gs', lineWidth))
         .style('n');
 
-    if (data.method) {
-        printer.text(formatLine('Forma Pago', data.method, lineWidth));
-        if (data.method === 'Efectivo') {
-            const receivedStr = data.received !== undefined ? data.received.toLocaleString('es-PY') + ' Gs' : '-';
-            const changeStr = data.change !== undefined ? data.change.toLocaleString('es-PY') + ' Gs' : '-';
+    if (data.method || data.payment_method) {
+        const method = data.method || data.payment_method || 'Efectivo';
+        printer.text(formatLine('Forma Pago', method, lineWidth));
+        if (method === 'Efectivo') {
+            const receivedStr = data.received !== undefined ? data.received.toLocaleString('es-PY') + ' Gs' : '10.000 Gs';
+            const changeStr = data.change !== undefined ? data.change.toLocaleString('es-PY') + ' Gs' : '4.500 Gs';
             printer
                 .text(formatLine('Efectivo', receivedStr, lineWidth))
                 .text(formatLine('Vuelto', changeStr, lineWidth));
@@ -113,7 +104,8 @@ function printTicketBody(printer, dashes, data, lineWidth) {
         .close();
 }
 
-async function printReceipt(data) {
+async function testPrintAurea(data = {}) {
+    const path = require('path');
     return new Promise((resolve, reject) => {
         try {
             const { device, printer } = getPrinter();
@@ -128,58 +120,40 @@ async function printReceipt(data) {
                 const dashes = '-'.repeat(lineWidth);
                 const logoPath = path.join(__dirname, '../assets/logo.png');
 
-                // Intentamos cargar el logo
+                // Intentamos cargar la imagen
                 escpos.Image.load(logoPath, function (image) {
-                    // Si no se pudo cargar la imagen, imprimimos solo texto
+                    // Si el callback devuelve un Error (ej: formato de imagen corrupto o no soportado)
                     if (image instanceof Error || !(image instanceof escpos.Image)) {
-                        console.warn("Logo no disponible, imprimiendo sin imagen:", image && image.message);
+                        console.warn("No se pudo cargar el logo. Imprimiendo ticket sin imagen. Detalle:", image);
+
+                        // Imprimimos el cuerpo directamente sin imagen
+                        printer.font('b').align('ct');
                         printTicketBody(printer, dashes, data, lineWidth);
-                        return resolve({ success: true, warning: "Printed without logo." });
+                        return resolve({ success: true, warning: "Printed without logo because it failed to load." });
                     }
 
-                    // Imprimimos el logo con modo raster (el más compatible con impresoras térmicas)
+                    // Si se cargó correctamente, intentamos imprimirla usando raster (mucho más compatible)
                     try {
                         printer
                             .font('b')
                             .align('ct')
-                            .raster(image);
+                            .raster(image); // raster es síncrono y retorna el objeto printer
 
                         printTicketBody(printer, dashes, data, lineWidth);
                         resolve({ success: true });
                     } catch (err) {
-                        console.error("Error al imprimir imagen con raster:", err);
-                        // Fallback: imprimimos el ticket sin logo
+                        console.error("Error al imprimir la imagen física con raster:", err);
+                        // Fallback: imprimir el texto aunque la imagen dé error de impresora
                         printTicketBody(printer, dashes, data, lineWidth);
                         resolve({ success: true, error: err.message });
                     }
                 });
             });
         } catch (e) {
-            console.error("Print Receipt Exception:", e);
+            console.error("Print Exception:", e);
             resolve({ success: false, error: e.message });
         }
     });
 }
 
-function openCashDrawer() {
-    return new Promise((resolve, reject) => {
-        try {
-            const { device, printer } = getPrinter();
-
-            device.open(function (error) {
-                if (error) return reject(error);
-
-                printer
-                    .cashdraw(2) // Pin 2
-                    .close();
-
-                resolve({ success: true });
-            });
-        } catch (e) {
-            console.error("Open Drawer Exception:", e);
-            resolve({ success: false, error: e.message });
-        }
-    });
-}
-
-module.exports = { printReceipt, openCashDrawer };
+module.exports = { testPrintAurea };

@@ -290,3 +290,11 @@ ipcMain.handle('update-movement', async (event, { id, amount, reason, user, rest
 ipcMain.handle('get-movement-details', async (event, id) => {
     return await db.getMovementById(id);
 });
+
+ipcMain.handle('get-categories', async () => {
+    return await db.getCategories();
+});
+
+ipcMain.handle('create-category', async (event, name) => {
+    return await db.createCategory(name);
+});

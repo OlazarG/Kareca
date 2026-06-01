@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bodega POS - K-RECA v2.1</title>
+    <title>Aurea Accesorios</title>
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Icons -->
@@ -136,7 +136,7 @@
     <div class="main-wrapper">
         <!-- Sidebar -->
         <div class="sidebar">
-            <h4 class="text-center mb-4 text-white" style="letter-spacing: 2px; font-weight: 700;">K-RECA POS</h4>
+            <h4 class="text-center mb-4 text-white" style="letter-spacing: 2px; font-weight: 700;">Áurea Accesorios</h4>
             <a href="#" onclick="showSection('dashboard')" id="nav-dashboard" class="active"><i
                     class="bi bi-speedometer2 me-2"></i>Dashboard</a>
             <a href="#" onclick="showSection('products')" id="nav-products"><i
@@ -274,13 +274,6 @@
                         <div class="col-md-3">
                             <select id="filter-category" class="form-select" onchange="applyFilters()">
                                 <option value="Todas">Todas las Categorías</option>
-                                <option value="Cervezas">Cervezas</option>
-                                <option value="Gaseosas">Gaseosas</option>
-                                <option value="Destilados">Destilados</option>
-                                <option value="Snacks">Snacks</option>
-                                <option value="Cigarrillos">Cigarrillos</option>
-                                <option value="Limpieza">Limpieza</option>
-                                <option value="Varios">Varios</option>
                             </select>
                         </div>
                         <div class="col-md-2">
@@ -312,15 +305,14 @@
                                 </div>
                                 <div class="col-md-3">
                                     <label class="form-label">Categoría</label>
-                                    <select class="form-select" id="prod-category">
-                                        <option value="Cervezas">Cervezas</option>
-                                        <option value="Gaseosas">Gaseosas</option>
-                                        <option value="Destilados">Destilados</option>
-                                        <option value="Snacks">Snacks</option>
-                                        <option value="Cigarrillos">Cigarrillos</option>
-                                        <option value="Limpieza">Limpieza</option>
-                                        <option value="Varios">Varios</option>
-                                    </select>
+                                    <div class="input-group">
+                                        <select class="form-select" id="prod-category">
+                                            <!-- Cargado dinámicamente -->
+                                        </select>
+                                        <button class="btn btn-outline-success" type="button" onclick="promptCreateCategory()" title="Nueva Categoría">
+                                            <i class="bi bi-plus-lg"></i>
+                                        </button>
+                                    </div>
                                 </div>
                                 <div class="col-md-3">
                                     <label class="form-label">Costo Base</label>

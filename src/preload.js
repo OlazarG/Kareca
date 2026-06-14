@@ -26,5 +26,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // Categories
     getCategories: () => ipcRenderer.invoke('get-categories'),
-    createCategory: (name) => ipcRenderer.invoke('create-category', name)
+    createCategory: (name) => ipcRenderer.invoke('create-category', name),
+
+    // Mesas (New)
+    getTables: () => ipcRenderer.invoke('get-tables'),
+    createTable: (number, x, y) => ipcRenderer.invoke('create-table', number, x, y),
+    updateTableStatus: (id, status) => ipcRenderer.invoke('update-table-status', id, status),
+    updateTablePosition: (id, x, y) => ipcRenderer.invoke('update-table-position', id, x, y),
+    deleteTable: (id) => ipcRenderer.invoke('delete-table', id),
+
+    // Clientes (New)
+    getClients: (search) => ipcRenderer.invoke('get-clients', search),
+    createClient: (clientData) => ipcRenderer.invoke('create-client', clientData),
+    updateClient: (id, clientData) => ipcRenderer.invoke('update-client', id, clientData),
+    deleteClient: (id) => ipcRenderer.invoke('delete-client', id),
+
+    // Comandas/Tabs (New)
+    getOpenTabs: () => ipcRenderer.invoke('get-open-tabs'),
+    getTabByTable: (tableId) => ipcRenderer.invoke('get-tab-by-table', tableId),
+    getTabDetails: (id) => ipcRenderer.invoke('get-tab-details', id),
+    openTab: (tableId, clientId, userName) => ipcRenderer.invoke('open-tab', tableId, clientId, userName),
+    addItemToTab: (tabId, item) => ipcRenderer.invoke('add-item-to-tab', tabId, item),
+    removeItemFromTab: (tabId, itemId) => ipcRenderer.invoke('remove-item-from-tab', tabId, itemId),
+    closeTabAndProcessSale: (tabId, paymentData) => ipcRenderer.invoke('close-tab-and-process-sale', tabId, paymentData),
+    updateTabItems: (tabId, items) => ipcRenderer.invoke('update-tab-items', tabId, items),
+    splitTabAndProcessSale: (tabId, splits) => ipcRenderer.invoke('split-tab-and-process-sale', tabId, splits)
 });

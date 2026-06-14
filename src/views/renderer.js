@@ -205,6 +205,9 @@ async function loadDashboard() {
             });
         }
 
+        // Load Tables map
+        await loadSalonTables();
+
     } catch (error) {
         console.error("Dashboard Load Error", error);
     }
@@ -235,6 +238,7 @@ function showSection(sectionId) {
     if (sectionId === 'pos') {
         document.getElementById('pos-search').focus();
         loadPosHistory();
+        loadPosTables();
     }
     if (sectionId === 'purchases') {
         document.getElementById('purchases-search').focus();
@@ -248,6 +252,9 @@ function showSection(sectionId) {
     }
     if (sectionId === 'caja') {
         loadCajaSection();
+    }
+    if (sectionId === 'clients') {
+        loadClients();
     }
 }
 
@@ -1206,63 +1213,114 @@ async function processSale() {
         received = currentTotal;
     }
 
-    const saleData = {
-        items: cart,
-        total: currentTotal,
-        method: method,
-        user: 'Cajero Default', // TODO: User Login
-        clientName: 'CLIENTE OCASIONAL', // TODO: Client Input
-        observation: document.getElementById('pos-observation').value, // Send Observation
-        received: received,
-        change: (received - currentTotal) > 0 ? (received - currentTotal) : 0
-    };
+    let clientName = 'CLIENTE OCASIONAL';
+    if (window.selectedCheckoutClient) {
+        clientName = window.selectedCheckoutClient.razon_social;
+    }
+
+    const opType = document.getElementById('pos-op-type').value;
 
     try {
-        const result = await window.electronAPI.processSale(saleData);
-        if (result.success) {
-            const modalEl = document.getElementById('paymentModal');
-            const modal = bootstrap.Modal.getInstance(modalEl);
-            modal.hide();
+        if (opType === 'table') {
+            const tableId = parseInt(document.getElementById('pos-table-select').value);
+            if (!tableId) {
+                Swal.fire('Error', 'Seleccione una mesa para cobrar.', 'error');
+                return;
+            }
+            const tab = await window.electronAPI.getTabByTable(tableId);
+            if (!tab) {
+                Swal.fire('Error', 'No se encontró una comanda abierta para esta mesa.', 'error');
+                return;
+            }
 
-            await Swal.fire({
-                title: '¡Venta Confirmada!',
-                text: 'Stock actualizado y venta registrada.',
-                icon: 'success',
-                timer: 1500,
-                showConfirmButton: false
-            });
-
-            // Print Ticket
-            const ticketData = {
-                id: result.id,
-                storeName: 'Aurea Accesorios',
-                items: saleData.items,
-                total: saleData.total,
-                method: saleData.method,
-                date: new Date().toLocaleString('es-PY'),
-                received: saleData.received,
-                change: saleData.change
+            const paymentData = {
+                method: method,
+                received: received,
+                change: (received - currentTotal) > 0 ? (received - currentTotal) : 0,
+                clientName: clientName,
+                observation: document.getElementById('pos-observation').value,
+                user: 'Cajero'
             };
 
-            // Fire and forget print (don't await strictly to block UI, but good to know if it fails)
-            window.electronAPI.printTicket(ticketData).then(res => {
-                if (!res.success) {
-                    console.warn("No se pudo imprimir el ticket", res.error);
-                    Swal.fire({
-                        toast: true, position: 'bottom-end',
-                        icon: 'warning', title: 'Impresora no detectada',
-                        showConfirmButton: false, timer: 3000
-                    });
-                }
-            });
+            const result = await window.electronAPI.closeTabAndProcessSale(tab.id, paymentData);
+            if (result.success) {
+                const modalEl = document.getElementById('paymentModal');
+                const modal = bootstrap.Modal.getInstance(modalEl);
+                modal.hide();
 
-            clearCart();
-            document.getElementById('pos-search').focus();
-            loadPosHistory(); // Refresh mini-history
+                await Swal.fire({
+                    title: '¡Mesa Liberada y Venta Confirmada!',
+                    text: 'Comanda cerrada, stock descontado y mesa libre.',
+                    icon: 'success',
+                    timer: 1500,
+                    showConfirmButton: false
+                });
+
+                // Clear states
+                clearCart();
+                clearSelectedCheckoutClient();
+                // Reset opType to direct
+                document.getElementById('pos-op-type').value = 'direct';
+                togglePosOpType();
+                loadPosHistory();
+            }
+        } else {
+            const saleData = {
+                items: cart,
+                total: currentTotal,
+                method: method,
+                user: 'Cajero', 
+                clientName: clientName, 
+                observation: document.getElementById('pos-observation').value,
+                received: received,
+                change: (received - currentTotal) > 0 ? (received - currentTotal) : 0
+            };
+
+            const result = await window.electronAPI.processSale(saleData);
+            if (result.success) {
+                const modalEl = document.getElementById('paymentModal');
+                const modal = bootstrap.Modal.getInstance(modalEl);
+                modal.hide();
+
+                await Swal.fire({
+                    title: '¡Venta Confirmada!',
+                    text: 'Stock actualizado y venta registrada.',
+                    icon: 'success',
+                    timer: 1500,
+                    showConfirmButton: false
+                });
+
+                // Print Ticket
+                const ticketData = {
+                    id: result.id,
+                    storeName: 'Aurea Accesorios',
+                    items: saleData.items,
+                    total: saleData.total,
+                    method: saleData.method,
+                    date: new Date().toLocaleString('es-PY'),
+                    received: saleData.received,
+                    change: saleData.change
+                };
+
+                window.electronAPI.printTicket(ticketData).then(res => {
+                    if (!res.success) {
+                        console.warn("No se pudo imprimir el ticket", res.error);
+                        Swal.fire({
+                            toast: true, position: 'bottom-end',
+                            icon: 'warning', title: 'Impresora no detectada',
+                            showConfirmButton: false, timer: 3000
+                        });
+                    }
+                });
+
+                clearCart();
+                clearSelectedCheckoutClient();
+                document.getElementById('pos-search').focus();
+                loadPosHistory();
+            }
         }
     } catch (error) {
         console.error("Sale Error", error);
-        // Show detailed error for debugging
         const msg = error.message.replace('Error invoking remote method \'process-sale\': ', '');
         Swal.fire('Error', `No se pudo procesar la venta.\nDetalle: ${msg}`, 'error');
     }
@@ -1448,10 +1506,10 @@ async function loadCajaSection() {
             const expectedDigital = digitalSales;
             const expectedTotal = expectedPhysical + expectedDigital;
 
-            // Update Cards
-            document.getElementById('close-expected-cash').innerText = formatCurrency(expectedPhysical);
-            document.getElementById('close-expected-digital').innerText = formatCurrency(expectedDigital);
-            document.getElementById('close-expected-total').innerText = formatCurrency(expectedTotal);
+            // Update Cards (Oculto para Cierre Ciego)
+            document.getElementById('close-expected-cash').innerText = "Gs. *** (Cierre Ciego)";
+            document.getElementById('close-expected-digital').innerText = "Gs. *** (Cierre Ciego)";
+            document.getElementById('close-expected-total').innerText = "Gs. *** (Cierre Ciego)";
 
             // Attach listener for diff
             const input = document.getElementById('caja-final-amount');
@@ -1472,32 +1530,9 @@ async function loadCajaSection() {
 }
 
 function calculateCloseDiff() {
-    const valid = expectedPhysical;
-    const input = document.getElementById('caja-final-amount');
-    const actual = parseCurrency(input.value);
-
-    const diff = actual - valid;
     const diffDisplay = document.getElementById('close-diff-display');
-
-    if (actual === 0 && input.value === '') {
-        diffDisplay.innerText = '-';
-        diffDisplay.classList.remove('text-success', 'text-danger');
-        return;
-    }
-
-    if (diff === 0) {
-        diffDisplay.innerText = 'Perfecto (0)';
-        diffDisplay.classList.remove('text-danger');
-        diffDisplay.classList.add('text-success');
-    } else if (diff > 0) {
-        diffDisplay.innerText = `Sobra: ${formatCurrency(diff)}`;
-        diffDisplay.classList.remove('text-danger');
-        diffDisplay.classList.add('text-success');
-    } else {
-        diffDisplay.innerText = `Falta: ${formatCurrency(Math.abs(diff))}`;
-        diffDisplay.classList.remove('text-success');
-        diffDisplay.classList.add('text-danger');
-    }
+    diffDisplay.innerText = 'Oculto (Cierre Ciego)';
+    diffDisplay.className = 'form-control form-control-lg bg-light border-0 fw-bold text-muted';
 }
 
 async function openRegister() {
@@ -1528,48 +1563,55 @@ async function openRegister() {
 async function closeRegister() {
     const rawAmount = document.getElementById('caja-final-amount').value;
     const finalCash = parseCurrency(rawAmount);
-    const notes = document.getElementById('close-notes').value;
+    const notes = document.getElementById('close-notes').value.trim();
 
-    if (isNaN(finalCash) || finalCash < 0) {
-        Swal.fire('Error', 'Monto inválido', 'error');
+    if (isNaN(finalCash) || finalCash < 0 || rawAmount === '') {
+        Swal.fire('Error', 'Debe declarar un monto válido para cerrar caja.', 'error');
         return;
     }
 
-    // Confirmation
-    const diff = finalCash - expectedPhysical;
-    let warning = '';
-    if (diff !== 0) {
-        warning = diff < 0 ? `Atención: Falta ${formatCurrency(Math.abs(diff))}` : `Atención: Sobra ${formatCurrency(diff)}`;
-    }
-
     const confirm = await Swal.fire({
-        title: '¿Confirmar Cierre?',
-        html: `Declarado: <b>${formatCurrency(finalCash)}</b><br>${warning}<br><small>Se guardará la sesión.</small>`,
-        icon: diff === 0 ? 'question' : 'warning',
+        title: '¿Confirmar Declaración y Cierre?',
+        html: `Monto Declarado: <b>${formatCurrency(finalCash)}</b><br><small class="text-danger">Una vez confirmado, no podrá modificar el monto declarado.</small>`,
+        icon: 'question',
         showCancelButton: true,
-        confirmButtonText: 'Sí, Cerrar',
+        confirmButtonText: 'Sí, Declarar y Cerrar',
         cancelButtonText: 'Cancelar'
     });
 
     if (!confirm.isConfirmed) return;
 
     try {
-        // Note: passing Notes? Backend closeRegister might need update to store notes in description if desired.
-        // Current backend puts Diff in description. We can append notes.
-        // But closeRegister signature is (finalCash, user).
-        // Let's update backend signature later if we want to save notes specifically?
-        // OR just pass notes as User for now? No, that's hacky.
-        // For now, ignoring notes in backend, just local logging.
-        // Ideally we update backend closeRegister to accept description/notes.
-
+        // We call the closeRegister API which calculates stats and commits the transaction
         const result = await window.electronAPI.closeRegister(finalCash, 'Admin');
 
+        const diff = finalCash - expectedPhysical;
+        let diffHtml = '';
+        if (diff === 0) {
+            diffHtml = `<span class="text-success fw-bold">Perfecto (0)</span>`;
+        } else if (diff > 0) {
+            diffHtml = `<span class="text-success fw-bold">Sobrante de ${formatCurrency(diff)}</span>`;
+        } else {
+            diffHtml = `<span class="text-danger fw-bold">Faltante de ${formatCurrency(Math.abs(diff))}</span>`;
+        }
+
         await Swal.fire({
-            title: 'Caja Cerrada',
-            text: 'Turno finalizado exitosamente.',
-            icon: 'success'
+            title: 'Caja Cerrada Exitosamente',
+            html: `
+                <div class="text-start p-3 bg-light rounded">
+                    <p><b>Efectivo Declarado:</b> ${formatCurrency(finalCash)}</p>
+                    <p><b>Efectivo Esperado:</b> ${formatCurrency(expectedPhysical)}</p>
+                    <p><b>Diferencia:</b> ${diffHtml}</p>
+                    ${notes ? `<p><b>Notas:</b> ${notes}</p>` : ''}
+                </div>
+            `,
+            icon: 'success',
+            confirmButtonText: 'Entendido'
         });
 
+        // Reset field
+        document.getElementById('caja-final-amount').value = '';
+        document.getElementById('close-notes').value = '';
         loadCajaSection();
 
     } catch (error) {
@@ -1801,5 +1843,942 @@ async function reprintTicket(id) {
     } catch (e) {
         console.error("Reprint Error", e);
         Swal.fire('Error', 'Error al intentar reimprimir: ' + e.message, 'error');
+    }
+}
+
+// --- Mesas (Salón) Front Logic ---
+async function loadSalonTables() {
+    const container = document.getElementById('salon-tables-container');
+    if (!container) return;
+
+    container.innerHTML = '<div class="col-12 text-center text-muted">Cargando mesas...</div>';
+
+    try {
+        const tables = await window.electronAPI.getTables();
+        container.innerHTML = '';
+
+        if (tables.length === 0) {
+            container.innerHTML = '<div class="col-12 text-center text-muted py-3">No hay mesas registradas. ¡Agrega una nueva mesa arriba!</div>';
+            return;
+        }
+
+        tables.forEach(t => {
+            let statusBadge = '';
+            let cardBorder = '';
+            let footerBtn = '';
+
+            if (t.status === 'Libre') {
+                statusBadge = `<span class="badge bg-success">Libre</span>`;
+                cardBorder = 'border-success';
+                footerBtn = `<button class="btn btn-sm btn-primary w-100" onclick="quickOpenTab(${t.id})"><i class="bi bi-cart-plus"></i> Abrir Cuenta</button>`;
+            } else if (t.status === 'Ocupada') {
+                statusBadge = `<span class="badge bg-danger">Ocupada</span>`;
+                cardBorder = 'border-danger';
+                footerBtn = `
+                    <div class="d-flex gap-1">
+                        <button class="btn btn-sm btn-outline-primary" onclick="loadTabInPOS(${t.id})" title="Pedido"><i class="bi bi-pencil-square"></i></button>
+                        <button class="btn btn-sm btn-outline-info" onclick="initiateSplit(${t.id})" title="Dividir Cuenta"><i class="bi bi-diagram-2"></i></button>
+                        <button class="btn btn-sm btn-success flex-grow-1" onclick="quickCheckoutTab(${t.id})"><i class="bi bi-cash-coin"></i> Cobrar</button>
+                    </div>
+                `;
+            } else {
+                statusBadge = `<span class="badge bg-warning text-dark">Pendiente</span>`;
+                cardBorder = 'border-warning';
+                footerBtn = `<button class="btn btn-sm btn-warning w-100" onclick="loadTabInPOS(${t.id})"><i class="bi bi-cash-coin"></i> Cobrar Cuenta</button>`;
+            }
+
+            const col = document.createElement('div');
+            col.className = 'col-md-3';
+            col.innerHTML = `
+                <div class="card h-100 border-2 ${cardBorder} shadow-sm">
+                    <div class="card-body p-3 d-flex flex-column justify-content-between">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h5 class="card-title fw-bold mb-0">Mesa ${t.number}</h5>
+                            ${statusBadge}
+                        </div>
+                        <div class="text-center my-3">
+                            <i class="bi bi-shop text-muted fs-1"></i>
+                        </div>
+                        <div>
+                            ${footerBtn}
+                            <button class="btn btn-link btn-sm text-danger w-100 mt-2 p-0 text-center text-decoration-none" style="font-size: 0.8rem;" onclick="confirmDeleteTable(${t.id}, '${t.number}')">
+                                <i class="bi bi-trash"></i> Eliminar Mesa
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.appendChild(col);
+        });
+
+    } catch (e) {
+        console.error("Error loading salon tables:", e);
+        container.innerHTML = '<div class="col-12 text-center text-danger">Error al cargar el mapa del salón.</div>';
+    }
+}
+
+async function promptCreateTable() {
+    const { value: number } = await Swal.fire({
+        title: 'Agregar Nueva Mesa',
+        input: 'text',
+        inputLabel: 'Número o Nombre de la Mesa',
+        inputPlaceholder: 'Ej: 1, 2B, VIP...',
+        showCancelButton: true,
+        cancelButtonText: 'Cancelar',
+        confirmButtonText: 'Agregar',
+        confirmButtonColor: '#198754',
+        inputValidator: (value) => {
+            if (!value || !value.trim()) {
+                return '¡Debes ingresar un número o identificación!';
+            }
+        }
+    });
+
+    if (number) {
+        try {
+            await window.electronAPI.createTable(number.trim(), 0, 0);
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Mesa ${number} agregada`, timer: 1500, showConfirmButton: false });
+            await loadSalonTables();
+        } catch (e) {
+            console.error("Error creating table:", e);
+            Swal.fire('Error', 'No se pudo crear la mesa. Puede que el número ya exista.', 'error');
+        }
+    }
+}
+
+async function confirmDeleteTable(id, number) {
+    const confirm = await Swal.fire({
+        title: `¿Eliminar Mesa ${number}?`,
+        text: "Esta acción no se puede deshacer.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar'
+    });
+
+    if (confirm.isConfirmed) {
+        try {
+            await window.electronAPI.deleteTable(id);
+            Swal.fire('Eliminada', `La mesa ${number} ha sido eliminada.`, 'success');
+            await loadSalonTables();
+        } catch (e) {
+            console.error("Error deleting table:", e);
+            Swal.fire('Error', 'No se pudo eliminar la mesa.', 'error');
+        }
+    }
+}
+
+async function quickOpenTab(tableId) {
+    try {
+        const clients = await window.electronAPI.getClients('');
+        
+        let clientOptions = '<option value="">CLIENTE OCASIONAL</option>';
+        clients.forEach(c => {
+            clientOptions += `<option value="${c.id}">${c.razon_social} (RUC: ${c.dni_ruc})</option>`;
+        });
+
+        const { value: formValues } = await Swal.fire({
+            title: 'Abrir Comanda / Tab',
+            html: `
+                <div class="text-start mb-3">
+                    <label class="form-label fw-bold">Asociar Cliente (Opcional)</label>
+                    <select id="swal-tab-client" class="form-select">${clientOptions}</select>
+                </div>
+            `,
+            focusConfirm: false,
+            showCancelButton: true,
+            confirmButtonText: 'Abrir Mesa',
+            cancelButtonText: 'Cancelar',
+            preConfirm: () => {
+                return document.getElementById('swal-tab-client').value;
+            }
+        });
+
+        if (formValues !== undefined) {
+            const clientId = formValues ? parseInt(formValues) : null;
+            await window.electronAPI.openTab(tableId, clientId, 'Cajero');
+            loadTabInPOS(tableId);
+        }
+    } catch (e) {
+        console.error("Error opening tab:", e);
+        Swal.fire('Error', 'No se pudo abrir la comanda en la mesa.', 'error');
+    }
+}
+
+function loadTabInPOS(tableId) {
+    showSection('pos');
+    
+    document.getElementById('pos-op-type').value = 'table';
+    togglePosOpType();
+    
+    setTimeout(() => {
+        const select = document.getElementById('pos-table-select');
+        select.value = tableId;
+        loadSelectedTableTab();
+    }, 100);
+}
+
+async function quickCheckoutTab(tableId) {
+    loadTabInPOS(tableId);
+    setTimeout(() => {
+        initiateCheckout();
+    }, 200);
+}
+
+// --- POS Tables Logic ---
+async function loadPosTables() {
+    const select = document.getElementById('pos-table-select');
+    if (!select) return;
+
+    try {
+        const tables = await window.electronAPI.getTables();
+        select.innerHTML = '<option value="">-- Seleccionar Mesa --</option>';
+        tables.forEach(t => {
+            const label = t.status === 'Ocupada' ? `Mesa ${t.number} (Ocupada)` : `Mesa ${t.number}`;
+            select.innerHTML += `<option value="${t.id}">${label}</option>`;
+        });
+    } catch (e) {
+        console.error("Error loading POS tables:", e);
+    }
+}
+
+function togglePosOpType() {
+    const opType = document.getElementById('pos-op-type').value;
+    const tableContainer = document.getElementById('pos-table-select-container');
+    const saveTabBtn = document.getElementById('btn-save-to-tab');
+
+    if (opType === 'table') {
+        tableContainer.style.display = 'block';
+        saveTabBtn.style.display = 'block';
+    } else {
+        tableContainer.style.display = 'none';
+        saveTabBtn.style.display = 'none';
+        clearCart();
+    }
+}
+
+async function loadSelectedTableTab() {
+    const tableId = parseInt(document.getElementById('pos-table-select').value);
+    if (!tableId) {
+        clearCart();
+        return;
+    }
+
+    try {
+        const tab = await window.electronAPI.getTabByTable(tableId);
+        if (tab) {
+            const details = await window.electronAPI.getTabDetails(tab.id);
+            cart = [];
+            if (details && details.items) {
+                details.items.forEach(ti => {
+                    cart.push({
+                        id: ti.product_id,
+                        name: ti.product_name,
+                        variant_name: ti.variant_name,
+                        price: parseFloat(ti.unit_price),
+                        qty: parseInt(ti.quantity)
+                    });
+                });
+            }
+            renderCart();
+            
+            if (details.client_id) {
+                window.selectedCheckoutClient = {
+                    id: details.client_id,
+                    razon_social: details.client_name,
+                    dni_ruc: details.client_ruc
+                };
+                updateCheckoutClientIndicator();
+            } else {
+                clearSelectedCheckoutClient();
+            }
+        } else {
+            clearCart();
+            clearSelectedCheckoutClient();
+        }
+    } catch (e) {
+        console.error("Error loading selected table tab:", e);
+    }
+}
+
+async function saveCartToTab() {
+    const tableId = parseInt(document.getElementById('pos-table-select').value);
+    if (!tableId) {
+        Swal.fire('Error', 'Seleccione una mesa para guardar la comanda.', 'error');
+        return;
+    }
+
+    if (cart.length === 0) {
+        Swal.fire('Carrito Vacío', 'Agregue productos antes de guardar en la mesa.', 'warning');
+        return;
+    }
+
+    try {
+        let tab = await window.electronAPI.getTabByTable(tableId);
+        let clientId = window.selectedCheckoutClient ? window.selectedCheckoutClient.id : null;
+        
+        if (!tab) {
+            tab = await window.electronAPI.openTab(tableId, clientId, 'Cajero');
+        }
+
+        await window.electronAPI.updateTabItems(tab.id, cart);
+
+        Swal.fire({
+            title: '¡Guardado!',
+            text: 'Productos guardados en la comanda de la mesa.',
+            icon: 'success',
+            timer: 1500,
+            showConfirmButton: false
+        });
+
+        clearCart();
+        clearSelectedCheckoutClient();
+        document.getElementById('pos-op-type').value = 'direct';
+        togglePosOpType();
+        showSection('dashboard');
+
+    } catch (e) {
+        console.error("Error saving comanda items:", e);
+        Swal.fire('Error', 'No se pudo guardar la comanda.', 'error');
+    }
+}
+
+// --- Split de Cuentas ---
+window.splitTabId = null;
+window.splitTableId = null;
+window.splitItems = [];
+window.splitGroups = [];
+window.splitUnassigned = [];
+
+async function initiateSplit(tableId) {
+    try {
+        const tab = await window.electronAPI.getTabByTable(tableId);
+        if (!tab) {
+            Swal.fire('Atención', 'No hay una comanda abierta en esta mesa.', 'info');
+            return;
+        }
+
+        const details = await window.electronAPI.getTabDetails(tab.id);
+        if (!details || !details.items || details.items.length === 0) {
+            Swal.fire('Atención', 'La comanda no tiene productos.', 'info');
+            return;
+        }
+
+        window.splitTabId = tab.id;
+        window.splitTableId = tableId;
+        window.splitItems = details.items.map(item => ({
+            product_id: item.product_id,
+            product_name: item.product_name,
+            variant_name: item.variant_name,
+            qty: parseInt(item.quantity),
+            unit_price: parseFloat(item.unit_price),
+            subtotal: parseFloat(item.subtotal)
+        }));
+        window.splitGroups = [];
+        window.splitUnassigned = window.splitItems.map((_, i) => i);
+
+        document.getElementById('split-table-info').innerText = `Mesa ${details.table_number || tableId} - Comanda #${tab.id}`;
+        document.getElementById('split-client-info').innerText = details.client_name ? `Cliente: ${details.client_name} (RUC: ${details.client_ruc || '-'})` : '';
+
+        renderSplitUI();
+
+        const modal = new bootstrap.Modal(document.getElementById('splitModal'));
+        modal.show();
+
+        if (window.splitItems.length > 0) {
+            addSplitGroup();
+        }
+    } catch (e) {
+        console.error("Error initiating split:", e);
+        Swal.fire('Error', 'No se pudo cargar la comanda.', 'error');
+    }
+}
+
+function renderSplitUI() {
+    const loading = document.getElementById('split-loading');
+    const content = document.getElementById('split-content');
+    if (loading) loading.style.display = 'none';
+    if (content) content.style.display = 'block';
+
+    // Unassigned items
+    const unassignedSection = document.getElementById('split-unassigned-section');
+    const unassignedContainer = document.getElementById('split-unassigned-items');
+    const unassignedCount = document.getElementById('split-unassigned-count');
+
+    if (window.splitUnassigned.length === 0) {
+        unassignedSection.style.display = 'none';
+    } else {
+        unassignedSection.style.display = 'block';
+        unassignedCount.innerText = window.splitUnassigned.length;
+        unassignedContainer.innerHTML = '';
+
+        window.splitUnassigned.forEach((itemIdx, ui) => {
+            const item = window.splitItems[itemIdx];
+            const div = document.createElement('div');
+            div.className = 'd-flex justify-content-between align-items-center border-bottom py-2';
+            div.innerHTML = `
+                <div class="flex-grow-1">
+                    <span class="fw-bold">${item.product_name}</span>
+                    <small class="text-muted ms-2">${item.variant_name || ''}</small>
+                    <span class="badge bg-secondary ms-2">x${item.qty}</span>
+                    <span class="ms-2 text-primary fw-bold">${formatCurrency(item.subtotal)}</span>
+                </div>
+                <div class="btn-group btn-group-sm">
+                    ${window.splitGroups.map((g, gi) => `
+                        <button class="btn btn-outline-primary" onclick="assignItemToGroup(${ui}, ${gi})" title="Asignar a ${g.label}">
+                            ${g.label.replace('Persona ', 'P')}
+                        </button>
+                    `).join('')}
+                </div>
+            `;
+            unassignedContainer.appendChild(div);
+        });
+    }
+
+    // Groups
+    const container = document.getElementById('split-groups-container');
+    container.innerHTML = '';
+
+    if (window.splitGroups.length === 0) {
+        container.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-people fs-1 d-block mb-2"></i>Agregue al menos una persona para dividir la cuenta.</div>';
+        updateSplitTotals();
+        return;
+    }
+
+    window.splitGroups.forEach((group, gi) => {
+        const groupTotal = group.items.reduce((sum, i) => sum + i.subtotal, 0);
+        const card = document.createElement('div');
+        card.className = 'card border-primary mb-3';
+        card.innerHTML = `
+            <div class="card-header bg-primary bg-opacity-10 py-2 d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="fw-bold"><i class="bi bi-person-circle me-1"></i>${group.label}</span>
+                    <span class="badge bg-primary ms-2">${formatCurrency(groupTotal)}</span>
+                </div>
+                <div>
+                    <button class="btn btn-sm btn-outline-danger" onclick="removeSplitGroup(${gi})" title="Eliminar persona">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body py-2">
+                ${group.items.length === 0 ? '<p class="text-muted small mb-0">Sin productos asignados</p>' : `
+                <table class="table table-sm table-borderless mb-2">
+                    <tbody>
+                        ${group.items.map((item, ii) => `
+                            <tr>
+                                <td class="ps-0">${item.product_name} <small class="text-muted">${item.variant_name || ''}</small></td>
+                                <td class="text-center">x${item.qty}</td>
+                                <td class="text-end">${formatCurrency(item.subtotal)}</td>
+                                <td class="text-end pe-0" style="width: 30px;">
+                                    <button class="btn btn-sm btn-link text-danger p-0" onclick="unassignItemFromGroup(${gi}, ${ii})" title="Quitar producto">
+                                        <i class="bi bi-x-circle"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                `}
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted">Método de pago</label>
+                        <select class="form-select form-select-sm" onchange="updateSplitGroupMethod(${gi}, this.value)">
+                            <option value="Efectivo" ${group.paymentMethod === 'Efectivo' ? 'selected' : ''}>Efectivo</option>
+                            <option value="QR" ${group.paymentMethod === 'QR' ? 'selected' : ''}>QR</option>
+                            <option value="Transferencia" ${group.paymentMethod === 'Transferencia' ? 'selected' : ''}>Transferencia</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted">Cliente (opcional)</label>
+                        <input type="text" class="form-control form-control-sm" placeholder="Nombre..." value="${group.clientName === 'CLIENTE OCASIONAL' ? '' : group.clientName}" onchange="updateSplitGroupClient(${gi}, this.value)">
+                    </div>
+                    <div class="col-md-4 text-md-end">
+                        <small class="text-muted">Subtotal</small>
+                        <div class="fw-bold fs-6">${formatCurrency(groupTotal)}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+
+    updateSplitTotals();
+    document.getElementById('split-content').scrollTop = 0;
+}
+
+function addSplitGroup() {
+    const num = window.splitGroups.length + 1;
+    window.splitGroups.push({
+        label: `Persona ${num}`,
+        items: [],
+        paymentMethod: 'Efectivo',
+        clientName: 'CLIENTE OCASIONAL'
+    });
+    renderSplitUI();
+}
+
+function removeSplitGroup(index) {
+    const group = window.splitGroups[index];
+    // Return items to unassigned
+    group.items.forEach(item => {
+        const foundIdx = window.splitItems.findIndex(si =>
+            si.product_id === item.product_id &&
+            si.variant_name === item.variant_name &&
+            si.qty === item.qty &&
+            si.unit_price === item.unit_price
+        );
+        if (foundIdx >= 0 && !window.splitUnassigned.includes(foundIdx)) {
+            window.splitUnassigned.push(foundIdx);
+        }
+    });
+    window.splitGroups.splice(index, 1);
+    // Re-label
+    window.splitGroups.forEach((g, i) => { g.label = `Persona ${i + 1}`; });
+    renderSplitUI();
+}
+
+function assignItemToGroup(unassignedIdx, groupIdx) {
+    const itemIdx = window.splitUnassigned[unassignedIdx];
+    const item = window.splitItems[itemIdx];
+
+    const existing = window.splitGroups[groupIdx].items.find(i =>
+        i.product_id === item.product_id && i.variant_name === item.variant_name
+    );
+
+    if (existing) {
+        existing.qty += item.qty;
+        existing.subtotal += item.subtotal;
+    } else {
+        window.splitGroups[groupIdx].items.push({ ...item });
+    }
+
+    window.splitUnassigned.splice(unassignedIdx, 1);
+    renderSplitUI();
+}
+
+function unassignItemFromGroup(groupIdx, itemIdx) {
+    const item = window.splitGroups[groupIdx].items[itemIdx];
+    const foundSrcIdx = window.splitItems.findIndex(si =>
+        si.product_id === item.product_id &&
+        si.variant_name === item.variant_name &&
+        si.subtotal === item.subtotal
+    );
+    if (foundSrcIdx >= 0 && !window.splitUnassigned.includes(foundSrcIdx)) {
+        window.splitUnassigned.push(foundSrcIdx);
+    }
+    window.splitGroups[groupIdx].items.splice(itemIdx, 1);
+    renderSplitUI();
+}
+
+function splitEqualParts() {
+    const numPeople = window.splitGroups.length;
+    if (numPeople === 0) {
+        Swal.fire('Atención', 'Agregue al menos una persona primero.', 'info');
+        return;
+    }
+
+    // Return all items to unassigned
+    window.splitGroups.forEach(g => { g.items = []; });
+
+    // Distribute items round-robin
+    let personIdx = 0;
+    for (const item of window.splitItems) {
+        // split quantities if needed
+        let remaining = item.qty;
+        while (remaining > 0) {
+            const qtyPerPerson = Math.ceil(remaining / (numPeople - personIdx));
+            const toAssign = Math.min(qtyPerPerson, remaining);
+            const subtotal = toAssign * item.unit_price;
+            const existing = window.splitGroups[personIdx % numPeople].items.find(i =>
+                i.product_id === item.product_id && i.variant_name === item.variant_name
+            );
+            if (existing) {
+                existing.qty += toAssign;
+                existing.subtotal += subtotal;
+            } else {
+                window.splitGroups[personIdx % numPeople].items.push({
+                    product_id: item.product_id,
+                    product_name: item.product_name,
+                    variant_name: item.variant_name,
+                    qty: toAssign,
+                    unit_price: item.unit_price,
+                    subtotal: subtotal
+                });
+            }
+            remaining -= toAssign;
+            personIdx = (personIdx + 1) % numPeople;
+        }
+    }
+
+    window.splitUnassigned = [];
+    renderSplitUI();
+}
+
+function updateSplitGroupMethod(index, value) {
+    window.splitGroups[index].paymentMethod = value;
+}
+
+function updateSplitGroupClient(index, value) {
+    window.splitGroups[index].clientName = value.trim() || 'CLIENTE OCASIONAL';
+}
+
+function updateSplitTotals() {
+    const totalComanda = window.splitItems.reduce((sum, i) => sum + i.subtotal, 0);
+    const totalAssigned = window.splitGroups.reduce((sum, g) =>
+        sum + g.items.reduce((s, i) => s + i.subtotal, 0), 0
+    );
+
+    document.getElementById('split-total-display').innerText = formatCurrency(totalComanda);
+    document.getElementById('split-assigned-display').innerText = formatCurrency(totalAssigned);
+
+    const warning = document.getElementById('split-balance-warning');
+    if (totalAssigned < totalComanda) {
+        warning.style.display = 'inline';
+    } else {
+        warning.style.display = 'none';
+    }
+
+    const processBtn = document.getElementById('btn-process-split');
+    processBtn.disabled = totalAssigned < totalComanda || window.splitGroups.length === 0;
+}
+
+async function processSplit() {
+    const unassignedCount = window.splitUnassigned.length;
+    if (unassignedCount > 0) {
+        Swal.fire('Productos sin asignar',
+            `Faltan asignar ${unassignedCount} producto(s) a alguna persona.`,
+            'warning');
+        return;
+    }
+
+    if (window.splitGroups.length === 0) {
+        Swal.fire('Sin grupos', 'Agregue al menos una persona para dividir la cuenta.', 'warning');
+        return;
+    }
+
+    const validGroups = window.splitGroups.filter(g => g.items.length > 0);
+    if (validGroups.length === 0) {
+        Swal.fire('Sin productos', 'Cada persona debe tener al menos un producto asignado.', 'warning');
+        return;
+    }
+
+    const confirm = await Swal.fire({
+        title: '¿Dividir Cuenta?',
+        html: `
+            <p>Se dividirá la cuenta en <strong>${validGroups.length} grupo(s)</strong>.</p>
+            <p class="mb-1">Cada grupo generará un comprobante de pago independiente.</p>
+            <div class="text-start small">
+                ${validGroups.map((g, i) => `
+                    <div class="border-bottom py-1">
+                        <strong>${g.label}</strong>: ${formatCurrency(g.items.reduce((s, it) => s + it.subtotal, 0))} 
+                        (${g.paymentMethod}) ${g.clientName !== 'CLIENTE OCASIONAL' ? `- ${g.clientName}` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        `,
+        icon: 'info',
+        showCancelButton: true,
+        confirmButtonText: 'Sí, dividir cuenta',
+        confirmButtonColor: '#198754',
+        cancelButtonText: 'Cancelar'
+    });
+
+    if (!confirm.isConfirmed) return;
+
+    try {
+        const splits = validGroups.map(g => ({
+            items: g.items.map(i => ({
+                product_id: i.product_id,
+                product_name: i.product_name,
+                variant_name: i.variant_name || null,
+                qty: i.qty,
+                unit_price: i.unit_price,
+                subtotal: i.subtotal
+            })),
+            paymentMethod: g.paymentMethod,
+            received: g.items.reduce((s, i) => s + i.subtotal, 0),
+            change: 0,
+            clientName: g.clientName
+        }));
+
+        const result = await window.electronAPI.splitTabAndProcessSale(window.splitTabId, splits);
+
+        if (result.success) {
+            const modalEl = document.getElementById('splitModal');
+            const modal = bootstrap.Modal.getInstance(modalEl);
+            if (modal) modal.hide();
+
+            await Swal.fire({
+                title: '¡Cuenta Dividida!',
+                html: `Se procesaron <strong>${splits.length} pago(s)</strong> correctamente.<br>La mesa ha sido liberada.`,
+                icon: 'success',
+                timer: 2000,
+                showConfirmButton: false
+            });
+
+            clearSplitState();
+            loadSalonTables();
+            showSection('dashboard');
+        }
+    } catch (e) {
+        console.error("Split Error", e);
+        const msg = e.message.replace('Error invoking remote method \'split-tab-and-process-sale\': ', '');
+        Swal.fire('Error', `No se pudo dividir la cuenta.\nDetalle: ${msg}`, 'error');
+    }
+}
+
+function clearSplitState() {
+    window.splitTabId = null;
+    window.splitTableId = null;
+    window.splitItems = [];
+    window.splitGroups = [];
+    window.splitUnassigned = [];
+    document.getElementById('split-table-info').innerText = 'Mesa # - Comanda';
+    document.getElementById('split-client-info').innerText = '';
+}
+
+// --- Clientes Front Logic ---
+window.selectedCheckoutClient = null;
+
+function toggleFastClientForm() {
+    const form = document.getElementById('checkout-client-fast-form');
+    const btn = document.getElementById('btn-toggle-fast-client');
+    if (form.style.display === 'none') {
+        form.style.display = 'block';
+        btn.innerHTML = '<i class="bi bi-person-dash-fill me-1"></i> Cancelar Registro';
+    } else {
+        form.style.display = 'none';
+        btn.innerHTML = '<i class="bi bi-person-plus-fill me-1"></i> + Registrar Cliente Nuevo';
+        clearFastClientFields();
+    }
+}
+
+function clearFastClientFields() {
+    document.getElementById('fast-client-ruc').value = '';
+    document.getElementById('fast-client-name').value = '';
+    document.getElementById('fast-client-email').value = '';
+    document.getElementById('fast-client-address').value = '';
+}
+
+async function searchClientInCheckout() {
+    const term = document.getElementById('checkout-client-search').value.trim();
+    if (!term) {
+        Swal.fire('Atención', 'Ingrese un RUC o Nombre para buscar.', 'warning');
+        return;
+    }
+
+    try {
+        const clients = await window.electronAPI.getClients(term);
+        if (clients.length === 0) {
+            Swal.fire('No encontrado', 'No se encontró ningún cliente. Puede registrar uno nuevo.', 'info');
+            document.getElementById('checkout-client-fast-form').style.display = 'block';
+            document.getElementById('fast-client-ruc').value = term;
+            document.getElementById('btn-toggle-fast-client').innerHTML = '<i class="bi bi-person-dash-fill me-1"></i> Cancelar Registro';
+            return;
+        }
+
+        if (clients.length === 1) {
+            window.selectedCheckoutClient = clients[0];
+            updateCheckoutClientIndicator();
+        } else {
+            let htmlOptions = '<div class="list-group text-start">';
+            clients.forEach((c, index) => {
+                htmlOptions += `
+                    <button class="list-group-item list-group-item-action" onclick="selectCheckoutClient(${index})">
+                        <h6 class="mb-1 fw-bold">${c.razon_social}</h6>
+                        <small>RUC/DNI: ${c.dni_ruc} | Dirección: ${c.direccion || '-'}</small>
+                    </button>
+                `;
+            });
+            htmlOptions += '</div>';
+
+            window.checkoutClientOptions = clients;
+            await Swal.fire({
+                title: 'Seleccione Cliente',
+                html: htmlOptions,
+                showConfirmButton: false,
+                showCloseButton: true
+            });
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+function selectCheckoutClient(index) {
+    const c = window.checkoutClientOptions[index];
+    if (c) {
+        window.selectedCheckoutClient = c;
+        updateCheckoutClientIndicator();
+        Swal.close();
+    }
+}
+
+function updateCheckoutClientIndicator() {
+    if (window.selectedCheckoutClient) {
+        document.getElementById('chk-client-name').innerText = window.selectedCheckoutClient.razon_social;
+        document.getElementById('chk-client-ruc').innerText = `RUC: ${window.selectedCheckoutClient.dni_ruc}`;
+        document.getElementById('checkout-client-selected').style.display = 'block';
+        document.getElementById('checkout-client-fast-form').style.display = 'none';
+        document.getElementById('btn-toggle-fast-client').innerHTML = '<i class="bi bi-person-plus-fill me-1"></i> + Registrar Cliente Nuevo';
+        clearFastClientFields();
+    }
+}
+
+function clearSelectedCheckoutClient() {
+    window.selectedCheckoutClient = null;
+    document.getElementById('checkout-client-selected').style.display = 'none';
+    document.getElementById('checkout-client-search').value = '';
+}
+
+async function saveFastClient() {
+    const ruc = document.getElementById('fast-client-ruc').value.trim();
+    const name = document.getElementById('fast-client-name').value.trim();
+    const email = document.getElementById('fast-client-email').value.trim();
+    const address = document.getElementById('fast-client-address').value.trim();
+
+    if (!ruc || !name) {
+        Swal.fire('Campos Obligatorios', 'RUC/DNI y Razón Social son requeridos.', 'warning');
+        return;
+    }
+
+    try {
+        const clientData = { dni_ruc: ruc, razon_social: name, email, direccion: address };
+        const saved = await window.electronAPI.createClient(clientData);
+        if (saved) {
+            window.selectedCheckoutClient = saved;
+            updateCheckoutClientIndicator();
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Cliente registrado', timer: 1500, showConfirmButton: false });
+        }
+    } catch (e) {
+        console.error(e);
+        Swal.fire('Error', 'No se pudo registrar el cliente (RUC duplicado o inválido).', 'error');
+    }
+}
+
+// --- Clientes Admin Section Logic ---
+async function loadClients() {
+    const tbody = document.getElementById('clients-table-body');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center">Cargando clientes...</td></tr>';
+
+    try {
+        const term = document.getElementById('client-search-input').value.trim();
+        const clients = await window.electronAPI.getClients(term);
+
+        tbody.innerHTML = '';
+        if (clients.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No se encontraron clientes.</td></tr>';
+            return;
+        }
+
+        clients.forEach(c => {
+            const row = `
+                <tr>
+                    <td>${c.id}</td>
+                    <td class="fw-bold">${c.dni_ruc}</td>
+                    <td>${c.razon_social}</td>
+                    <td>${c.email || '-'}</td>
+                    <td>${c.direccion || '-'}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-warning me-1" onclick="editClient(${c.id})"><i class="bi bi-pencil"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteClient(${c.id}, '${c.razon_social}')"><i class="bi bi-trash"></i></button>
+                    </td>
+                </tr>
+            `;
+            tbody.innerHTML += row;
+        });
+    } catch (e) {
+        console.error(e);
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Error al cargar clientes.</td></tr>';
+    }
+}
+
+function searchClientsList() {
+    loadClients();
+}
+
+function resetClientForm() {
+    document.getElementById('client-form').reset();
+    document.getElementById('edit-client-id').value = '';
+    document.getElementById('client-form-title').innerText = 'Registrar Nuevo Cliente';
+    document.getElementById('btn-save-client').innerText = 'Guardar Cliente';
+}
+
+document.getElementById('client-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('edit-client-id').value;
+    const clientData = {
+        dni_ruc: document.getElementById('client-ruc').value.trim(),
+        razon_social: document.getElementById('client-name').value.trim(),
+        email: document.getElementById('client-email').value.trim(),
+        direccion: document.getElementById('client-address').value.trim()
+    };
+
+    try {
+        if (id) {
+            await window.electronAPI.updateClient(id, clientData);
+            Swal.fire({ title: 'Actualizado', text: 'Datos actualizados correctamente.', icon: 'success', timer: 1500, showConfirmButton: false });
+        } else {
+            await window.electronAPI.createClient(clientData);
+            Swal.fire({ title: 'Registrado', text: 'Cliente registrado correctamente.', icon: 'success', timer: 1500, showConfirmButton: false });
+        }
+        resetClientForm();
+        loadClients();
+        const bsCollapse = bootstrap.Collapse.getInstance(document.getElementById('newClientForm'));
+        bsCollapse?.hide();
+    } catch (error) {
+        console.error(error);
+        Swal.fire('Error', 'No se pudo guardar el cliente.', 'error');
+    }
+});
+
+async function editClient(id) {
+    try {
+        const clients = await window.electronAPI.getClients('');
+        const c = clients.find(item => item.id === id);
+        if (!c) return;
+
+        document.getElementById('edit-client-id').value = c.id;
+        document.getElementById('client-ruc').value = c.dni_ruc;
+        document.getElementById('client-name').value = c.razon_social;
+        document.getElementById('client-email').value = c.email || '';
+        document.getElementById('client-address').value = c.direccion || '';
+
+        document.getElementById('client-form-title').innerText = `Editando Cliente: ${c.razon_social}`;
+        document.getElementById('btn-save-client').innerText = 'Guardar Cambios';
+
+        const bsCollapse = new bootstrap.Collapse(document.getElementById('newClientForm'), { show: true });
+        document.getElementById('newClientForm').classList.add('show');
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+async function confirmDeleteClient(id, name) {
+    const confirm = await Swal.fire({
+        title: `¿Eliminar Cliente "${name}"?`,
+        text: "Se desvinculará de futuras comandas.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar'
+    });
+
+    if (confirm.isConfirmed) {
+        try {
+            await window.electronAPI.deleteClient(id);
+            Swal.fire('Eliminado', 'El cliente ha sido eliminado.', 'success');
+            loadClients();
+        } catch (e) {
+            console.error(e);
+            Swal.fire('Error', 'No se pudo eliminar el cliente.', 'error');
+        }
     }
 }

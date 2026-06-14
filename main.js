@@ -298,3 +298,78 @@ ipcMain.handle('get-categories', async () => {
 ipcMain.handle('create-category', async (event, name) => {
     return await db.createCategory(name);
 });
+
+// --- Mesas IPC ---
+ipcMain.handle('get-tables', async () => {
+    return await db.getTables();
+});
+
+ipcMain.handle('create-table', async (event, number, x, y) => {
+    return await db.createTable(number, x, y);
+});
+
+ipcMain.handle('update-table-status', async (event, id, status) => {
+    return await db.updateTableStatus(id, status);
+});
+
+ipcMain.handle('update-table-position', async (event, id, x, y) => {
+    return await db.updateTablePosition(id, x, y);
+});
+
+ipcMain.handle('delete-table', async (event, id) => {
+    return await db.deleteTable(id);
+});
+
+// --- Clientes IPC ---
+ipcMain.handle('get-clients', async (event, search) => {
+    return await db.getClients(search);
+});
+
+ipcMain.handle('create-client', async (event, clientData) => {
+    return await db.createClient(clientData);
+});
+
+ipcMain.handle('update-client', async (event, id, clientData) => {
+    return await db.updateClient(id, clientData);
+});
+
+ipcMain.handle('delete-client', async (event, id) => {
+    return await db.deleteClient(id);
+});
+
+// --- Comandas / Tabs IPC ---
+ipcMain.handle('get-open-tabs', async () => {
+    return await db.getOpenTabs();
+});
+
+ipcMain.handle('get-tab-by-table', async (event, tableId) => {
+    return await db.getTabByTable(tableId);
+});
+
+ipcMain.handle('get-tab-details', async (event, id) => {
+    return await db.getTabDetails(id);
+});
+
+ipcMain.handle('open-tab', async (event, tableId, clientId, userName) => {
+    return await db.openTab(tableId, clientId, userName);
+});
+
+ipcMain.handle('add-item-to-tab', async (event, tabId, item) => {
+    return await db.addItemToTab(tabId, item);
+});
+
+ipcMain.handle('remove-item-from-tab', async (event, tabId, itemId) => {
+    return await db.removeItemFromTab(tabId, itemId);
+});
+
+ipcMain.handle('close-tab-and-process-sale', async (event, tabId, paymentData) => {
+    return await db.closeTabAndProcessSale(tabId, paymentData);
+});
+
+ipcMain.handle('update-tab-items', async (event, tabId, items) => {
+    return await db.updateTabItems(tabId, items);
+});
+
+ipcMain.handle('split-tab-and-process-sale', async (event, tabId, splits) => {
+    return await db.splitTabAndProcessSale(tabId, splits);
+});

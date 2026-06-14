@@ -147,6 +147,7 @@
             <a href="#" onclick="showSection('reports')" id="nav-reports"><i
                     class="bi bi-file-earmark-bar-graph me-2"></i>Reportes</a>
             <a href="#" onclick="showSection('caja')" id="nav-caja"><i class="bi bi-wallet2 me-2"></i>Control Caja</a>
+            <a href="#" onclick="showSection('clients')" id="nav-clients"><i class="bi bi-people me-2"></i>Clientes</a>
         </div>
 
         <!-- Main Content -->
@@ -198,6 +199,21 @@
                             <h5>Transacciones</h5>
                             <h3 id="dash-tx-count">0</h3>
                             <small class="text-white-50">Movimientos totales</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Salon / Tables Section -->
+                <div class="card card-custom mb-5">
+                    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-grid-3x3-gap-fill me-2 text-primary"></i>Mapa del Salón (Mesas)</h5>
+                        <button class="btn btn-primary btn-sm" onclick="promptCreateTable()">
+                            <i class="bi bi-plus-circle me-1"></i>Agregar Mesa
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3" id="salon-tables-container">
+                            <!-- Populated dynamically via JS -->
                         </div>
                     </div>
                 </div>
@@ -460,6 +476,22 @@
                             <div>
                                 <h4>Resumen de Venta</h4>
                                 <hr>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label text-muted fw-bold">Tipo de Operación</label>
+                                    <select class="form-select" id="pos-op-type" onchange="togglePosOpType()">
+                                        <option value="direct" selected>Venta Directa (Mostrador)</option>
+                                        <option value="table">Asociar a Mesa (Comanda)</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-3" id="pos-table-select-container" style="display: none;">
+                                    <label class="form-label text-muted fw-bold">Seleccionar Mesa</label>
+                                    <select class="form-select" id="pos-table-select" onchange="loadSelectedTableTab()">
+                                        <!-- Populated dynamically -->
+                                    </select>
+                                </div>
+
                                 <div class="d-flex justify-content-between mb-2">
                                     <span>Items:</span>
                                     <span class="fw-bold" id="pos-item-count">0</span>
@@ -472,6 +504,9 @@
                             </div>
 
                             <div class="d-grid gap-2">
+                                <button class="btn btn-primary btn-lg py-3 mb-1" id="btn-save-to-tab" style="display: none;" onclick="saveCartToTab()">
+                                    <i class="bi bi-download me-2"></i> Guardar en Mesa
+                                </button>
                                 <button class="btn btn-success btn-lg py-3" onclick="initiateCheckout()">
                                     <i class="bi bi-cash-coin me-2"></i> COBRAR
                                 </button>
@@ -760,10 +795,152 @@
                 </div>
 
             </div>
+
+            <!-- Clients Section -->
+            <div id="clients-section" style="display:none;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h2>Gestión de Clientes</h2>
+                    <button class="btn btn-success" type="button" data-bs-toggle="collapse"
+                        data-bs-target="#newClientForm" id="btn-toggle-client-form">
+                        + Nuevo Cliente
+                    </button>
+                </div>
+
+                <!-- Client Form -->
+                <div class="collapse mb-3" id="newClientForm">
+                    <div class="card card-custom p-4 border-success">
+                        <h4 id="client-form-title">Registrar Nuevo Cliente</h4>
+                        <form id="client-form">
+                            <input type="hidden" id="edit-client-id">
+                            <div class="row mb-3">
+                                <div class="col-md-3">
+                                    <label class="form-label">RUC / DNI</label>
+                                    <input type="text" class="form-control" id="client-ruc" required placeholder="Ej: 80012345-6">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Razón Social / Nombre</label>
+                                    <input type="text" class="form-control" id="client-name" required placeholder="Ej: Juan Pérez">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Correo Electrónico</label>
+                                    <input type="email" class="form-control" id="client-email" placeholder="Ej: juan@gmail.com">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">Dirección</label>
+                                    <input type="text" class="form-control" id="client-address" placeholder="Ej: Calle Principal 123">
+                                </div>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button type="submit" class="btn btn-success" id="btn-save-client">Guardar Cliente</button>
+                                <button type="button" class="btn btn-secondary" onclick="resetClientForm()">Limpiar</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Clients List -->
+                <div class="card card-custom">
+                    <div class="card-header bg-white py-3">
+                        <input type="text" id="client-search-input" class="form-control" placeholder="Buscar cliente por RUC o Nombre..." onkeyup="searchClientsList()">
+                    </div>
+                    <div class="card-body">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>ID</th>
+                                    <th>RUC / DNI</th>
+                                    <th>Razón Social / Nombre</th>
+                                    <th>Correo Electrónico</th>
+                                    <th>Dirección</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="clients-table-body">
+                                <!-- Loaded dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
 
     </div>
     </div>
+    </div>
+
+    <!-- Split Modal -->
+    <div class="modal fade" id="splitModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-diagram-2 me-2"></i>Dividir Cuenta</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="split-loading" class="text-center py-4">
+                        <div class="spinner-border text-primary mb-2"></div>
+                        <p class="text-muted">Cargando comanda...</p>
+                    </div>
+
+                    <div id="split-content" style="display: none;">
+                        <!-- Header: table info + actions -->
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <h5 class="fw-bold mb-0" id="split-table-info">Mesa # - Comanda</h5>
+                                <small class="text-muted" id="split-client-info"></small>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-outline-primary btn-sm" onclick="splitEqualParts()" title="Distribuir items equitativamente entre todas las personas">
+                                    <i class="bi bi-distribute-vertical me-1"></i>Partes Iguales
+                                </button>
+                                <button class="btn btn-outline-success btn-sm" onclick="addSplitGroup()">
+                                    <i class="bi bi-person-plus me-1"></i>Agregar Persona
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Items Pool (unassigned) -->
+                        <div id="split-unassigned-section" class="card border-warning mb-3" style="display: none;">
+                            <div class="card-header bg-warning bg-opacity-10 py-2 d-flex justify-content-between align-items-center">
+                                <span class="fw-bold text-warning"><i class="bi bi-inbox me-1"></i>Productos sin asignar</span>
+                                <span class="badge bg-warning text-dark" id="split-unassigned-count">0</span>
+                            </div>
+                            <div class="card-body py-2" id="split-unassigned-items">
+                            </div>
+                        </div>
+
+                        <!-- Person Groups -->
+                        <div id="split-groups-container">
+                        </div>
+
+                        <!-- Totals bar -->
+                        <div class="card bg-light mt-3">
+                            <div class="card-body py-3">
+                                <div class="row align-items-center">
+                                    <div class="col-md-6">
+                                        <span class="text-muted">Total Comanda:</span>
+                                        <span class="fw-bold fs-5 ms-2" id="split-total-display">Gs. 0</span>
+                                    </div>
+                                    <div class="col-md-6 text-md-end">
+                                        <span class="text-muted">Total Asignado:</span>
+                                        <span class="fw-bold fs-5 ms-2 text-success" id="split-assigned-display">Gs. 0</span>
+                                        <span class="text-danger fw-bold ms-2" id="split-balance-warning" style="display: none;">
+                                            <i class="bi bi-exclamation-triangle-fill"></i> Faltan asignar productos
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-success btn-lg" id="btn-process-split" onclick="processSplit()">
+                        <i class="bi bi-check-all me-2"></i>Procesar División
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Payment Modal -->
@@ -781,6 +958,52 @@
                     </div>
 
                     <form id="payment-form">
+                        <!-- Client Selection / Fast Registration -->
+                        <div class="card p-3 mb-3 bg-light border-0">
+                            <h6 class="fw-bold mb-2"><i class="bi bi-person-fill text-success"></i> Datos del Cliente (Facturación)</h6>
+                            <div class="row g-2 align-items-center mb-2">
+                                <div class="col-8">
+                                    <input type="text" id="checkout-client-search" class="form-control" placeholder="Buscar RUC / DNI o Nombre...">
+                                </div>
+                                <div class="col-4">
+                                    <button type="button" class="btn btn-outline-primary w-100" onclick="searchClientInCheckout()"><i class="bi bi-search"></i> Buscar</button>
+                                </div>
+                            </div>
+                            
+                            <!-- Search Result or Selected Client indicator -->
+                            <div id="checkout-client-selected" class="alert alert-success py-2 mb-2" style="display: none; font-size: 0.9rem;">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong id="chk-client-name">CLIENTE OCASIONAL</strong>
+                                        <div class="small text-muted" id="chk-client-ruc">RUC: -</div>
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="clearSelectedCheckoutClient()"><i class="bi bi-x-circle-fill"></i></button>
+                                </div>
+                            </div>
+
+                            <!-- Fast Registration Form (Collapsed by default) -->
+                            <div id="checkout-client-fast-form" style="display: none;" class="border-top pt-2 mt-2">
+                                <small class="text-primary fw-bold d-block mb-2">Registrar Nuevo Cliente</small>
+                                <div class="mb-2">
+                                    <input type="text" id="fast-client-ruc" class="form-control form-control-sm" placeholder="RUC / DNI (Ej: 80012345-6)">
+                                </div>
+                                <div class="mb-2">
+                                    <input type="text" id="fast-client-name" class="form-control form-control-sm" placeholder="Razón Social / Nombre Completo">
+                                </div>
+                                <div class="mb-2">
+                                    <input type="email" id="fast-client-email" class="form-control form-control-sm" placeholder="Correo Electrónico">
+                                </div>
+                                <div class="mb-2">
+                                    <input type="text" id="fast-client-address" class="form-control form-control-sm" placeholder="Dirección">
+                                </div>
+                                <button type="button" class="btn btn-sm btn-success w-100" onclick="saveFastClient()"><i class="bi bi-save"></i> Guardar Cliente</button>
+                            </div>
+                            
+                            <button type="button" class="btn btn-sm btn-outline-secondary w-100 mt-1" id="btn-toggle-fast-client" onclick="toggleFastClientForm()">
+                                <i class="bi bi-person-plus-fill me-1"></i> + Registrar Cliente Nuevo
+                            </button>
+                        </div>
+
                         <div class="mb-3">
                             <label class="form-label">Método de Pago</label>
                             <select class="form-select form-select-lg" id="payment-method"

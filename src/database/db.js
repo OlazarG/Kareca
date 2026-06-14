@@ -192,6 +192,64 @@ async function initDatabase() {
         await client.query(`ALTER TABLE cash_sessions ALTER COLUMN closed_at TYPE TIMESTAMPTZ USING closed_at AT TIME ZONE 'UTC'`);
         await client.query(`ALTER TABLE products ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC'`);
 
+        // New Table: tables (Mesas)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS tables (
+                id SERIAL PRIMARY KEY,
+                number VARCHAR(50) UNIQUE NOT NULL,
+                status VARCHAR(30) DEFAULT 'Libre', -- 'Libre', 'Ocupada', 'Pendiente de Cobro'
+                x_pos INTEGER DEFAULT 0,
+                y_pos INTEGER DEFAULT 0,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        // New Table: clients (Clientes)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS clients (
+                id SERIAL PRIMARY KEY,
+                dni_ruc VARCHAR(50) UNIQUE NOT NULL,
+                razon_social VARCHAR(255) NOT NULL,
+                email VARCHAR(255),
+                direccion TEXT,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        // New Table: tabs (Comandas/Cuentas abiertas)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS tabs (
+                id SERIAL PRIMARY KEY,
+                table_id INTEGER REFERENCES tables(id) ON DELETE SET NULL,
+                client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+                status VARCHAR(20) DEFAULT 'OPEN', -- 'OPEN', 'CLOSED'
+                opened_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                closed_at TIMESTAMPTZ,
+                total DECIMAL(15, 2) DEFAULT 0,
+                user_name VARCHAR(100)
+            );
+        `);
+
+        // New Table: tab_items (Detalle de Comandas)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS tab_items (
+                id SERIAL PRIMARY KEY,
+                tab_id INTEGER REFERENCES tabs(id) ON DELETE CASCADE,
+                product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+                variant_name VARCHAR(50),
+                quantity INTEGER NOT NULL,
+                unit_price DECIMAL(15, 2) NOT NULL,
+                subtotal DECIMAL(15, 2) NOT NULL
+            );
+        `);
+
+        // Migration for cash_sessions blind close column
+        const checkDeclaredCol = await client.query("SELECT column_name FROM information_schema.columns WHERE table_name='cash_sessions' AND column_name='declared_cash'");
+        if (checkDeclaredCol.rows.length === 0) {
+            console.log("Migrating: Adding declared_cash column to cash_sessions...");
+            await client.query("ALTER TABLE cash_sessions ADD COLUMN declared_cash DECIMAL(15,2) DEFAULT 0");
+        }
+
         await client.query('COMMIT');
         console.log("Database schema initialized (Tables Recreated).");
     } catch (e) {
@@ -657,6 +715,7 @@ async function closeRegister(finalCash, user) {
                 UPDATE cash_sessions 
                 SET closed_at = CURRENT_TIMESTAMP, 
                     final_cash = $1, 
+                    declared_cash = $1,
                     total_sales_cash = $2, 
                     total_sales_other = $3, 
                     total_expenses = $4, 
@@ -784,6 +843,503 @@ async function createCategory(name) {
     }
 }
 
+// --- Tables (Mesas) ---
+async function getTables() {
+    try {
+        const res = await pool.query('SELECT * FROM tables ORDER BY number ASC');
+        return res.rows;
+    } catch (e) {
+        console.error("Get Tables Error", e);
+        throw e;
+    }
+}
+
+async function createTable(number, x_pos = 0, y_pos = 0) {
+    try {
+        const res = await pool.query(
+            'INSERT INTO tables (number, status, x_pos, y_pos) VALUES ($1, \'Libre\', $2, $3) RETURNING *',
+            [number, x_pos, y_pos]
+        );
+        return res.rows[0];
+    } catch (e) {
+        console.error("Create Table Error", e);
+        throw e;
+    }
+}
+
+async function updateTableStatus(id, status) {
+    try {
+        await pool.query('UPDATE tables SET status = $1 WHERE id = $2', [status, id]);
+        return { success: true };
+    } catch (e) {
+        console.error("Update Table Status Error", e);
+        throw e;
+    }
+}
+
+async function updateTablePosition(id, x_pos, y_pos) {
+    try {
+        await pool.query('UPDATE tables SET x_pos = $1, y_pos = $2 WHERE id = $3', [x_pos, y_pos, id]);
+        return { success: true };
+    } catch (e) {
+        console.error("Update Table Position Error", e);
+        throw e;
+    }
+}
+
+async function deleteTable(id) {
+    try {
+        await pool.query('DELETE FROM tables WHERE id = $1', [id]);
+        return { success: true };
+    } catch (e) {
+        console.error("Delete Table Error", e);
+        throw e;
+    }
+}
+
+// --- Clients (Clientes) ---
+async function getClients(search = '') {
+    try {
+        let query = 'SELECT * FROM clients';
+        const params = [];
+        if (search) {
+            query += ' WHERE dni_ruc ILIKE $1 OR razon_social ILIKE $1';
+            params.push(`%${search}%`);
+        }
+        query += ' ORDER BY razon_social ASC';
+        const res = await pool.query(query, params);
+        return res.rows;
+    } catch (e) {
+        console.error("Get Clients Error", e);
+        throw e;
+    }
+}
+
+async function createClient(clientData) {
+    try {
+        const res = await pool.query(
+            'INSERT INTO clients (dni_ruc, razon_social, email, direccion) VALUES ($1, $2, $3, $4) RETURNING *',
+            [clientData.dni_ruc, clientData.razon_social, clientData.email, clientData.direccion]
+        );
+        return res.rows[0];
+    } catch (e) {
+        console.error("Create Client Error", e);
+        throw e;
+    }
+}
+
+async function updateClient(id, clientData) {
+    try {
+        await pool.query(
+            'UPDATE clients SET dni_ruc = $1, razon_social = $2, email = $3, direccion = $4 WHERE id = $5',
+            [clientData.dni_ruc, clientData.razon_social, clientData.email, clientData.direccion, id]
+        );
+        return { success: true };
+    } catch (e) {
+        console.error("Update Client Error", e);
+        throw e;
+    }
+}
+
+async function deleteClient(id) {
+    try {
+        await pool.query('DELETE FROM clients WHERE id = $1', [id]);
+        return { success: true };
+    } catch (e) {
+        console.error("Delete Client Error", e);
+        throw e;
+    }
+}
+
+// --- Tabs (Comandas / Cuentas Abiertas) ---
+async function getOpenTabs() {
+    try {
+        const query = `
+            SELECT t.*, m.number as table_number, c.razon_social as client_name 
+            FROM tabs t 
+            LEFT JOIN tables m ON t.table_id = m.id 
+            LEFT JOIN clients c ON t.client_id = c.id 
+            WHERE t.status = 'OPEN'
+            ORDER BY t.opened_at DESC
+        `;
+        const res = await pool.query(query);
+        return res.rows;
+    } catch (e) {
+        console.error("Get Open Tabs Error", e);
+        throw e;
+    }
+}
+
+async function getTabByTable(tableId) {
+    try {
+        const query = `
+            SELECT * FROM tabs WHERE table_id = $1 AND status = 'OPEN' LIMIT 1
+        `;
+        const res = await pool.query(query, [tableId]);
+        if (res.rows.length === 0) return null;
+        return res.rows[0];
+    } catch (e) {
+        console.error("Get Tab By Table Error", e);
+        throw e;
+    }
+}
+
+async function getTabDetails(tabId) {
+    try {
+        const tabRes = await pool.query(`
+            SELECT t.*, m.number as table_number, c.razon_social as client_name, c.dni_ruc as client_ruc 
+            FROM tabs t 
+            LEFT JOIN tables m ON t.table_id = m.id 
+            LEFT JOIN clients c ON t.client_id = c.id 
+            WHERE t.id = $1
+        `, [tabId]);
+        if (tabRes.rows.length === 0) return null;
+
+        const itemsRes = await pool.query(`
+            SELECT ti.*, p.name as product_name 
+            FROM tab_items ti
+            JOIN products p ON ti.product_id = p.id
+            WHERE ti.tab_id = $1
+            ORDER BY ti.id ASC
+        `, [tabId]);
+
+        return {
+            ...tabRes.rows[0],
+            items: itemsRes.rows
+        };
+    } catch (e) {
+        console.error("Get Tab Details Error", e);
+        throw e;
+    }
+}
+
+async function openTab(tableId, clientId = null, userName = 'Cajero') {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // Check if there is already an open tab on this table
+        const checkTab = await client.query('SELECT id FROM tabs WHERE table_id = $1 AND status = \'OPEN\'', [tableId]);
+        if (checkTab.rows.length > 0) {
+            throw new Error("Ya existe una comanda abierta para esta mesa.");
+        }
+
+        // Open the tab
+        const tabRes = await client.query(
+            'INSERT INTO tabs (table_id, client_id, status, total, user_name) VALUES ($1, $2, \'OPEN\', 0, $3) RETURNING *',
+            [tableId, clientId, userName]
+        );
+
+        // Update table status to Ocupada
+        await client.query('UPDATE tables SET status = \'Ocupada\' WHERE id = $1', [tableId]);
+
+        await client.query('COMMIT');
+        return tabRes.rows[0];
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Open Tab Error", e);
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
+async function addItemToTab(tabId, item) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const subtotal = item.quantity * item.unit_price;
+
+        // Check if item already exists in the tab
+        const checkItem = await client.query(
+            'SELECT id, quantity FROM tab_items WHERE tab_id = $1 AND product_id = $2 AND (variant_name = $3 OR (variant_name IS NULL AND $3 IS NULL))',
+            [tabId, item.product_id, item.variant_name || null]
+        );
+
+        if (checkItem.rows.length > 0) {
+            const newQty = checkItem.rows[0].quantity + item.quantity;
+            const newSubtotal = newQty * item.unit_price;
+            await client.query(
+                'UPDATE tab_items SET quantity = $1, subtotal = $2 WHERE id = $3',
+                [newQty, newSubtotal, checkItem.rows[0].id]
+            );
+        } else {
+            await client.query(
+                'INSERT INTO tab_items (tab_id, product_id, variant_name, quantity, unit_price, subtotal) VALUES ($1, $2, $3, $4, $5, $6)',
+                [tabId, item.product_id, item.variant_name || null, item.quantity, item.unit_price, subtotal]
+            );
+        }
+
+        // Update Tab Total
+        await client.query(`
+            UPDATE tabs 
+            SET total = (SELECT COALESCE(SUM(subtotal), 0) FROM tab_items WHERE tab_id = $1)
+            WHERE id = $1
+        `, [tabId]);
+
+        await client.query('COMMIT');
+        return { success: true };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Add Item to Tab Error", e);
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
+async function removeItemFromTab(tabId, itemId) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        await client.query('DELETE FROM tab_items WHERE id = $1 AND tab_id = $2', [itemId, tabId]);
+
+        // Update Tab Total
+        await client.query(`
+            UPDATE tabs 
+            SET total = (SELECT COALESCE(SUM(subtotal), 0) FROM tab_items WHERE tab_id = $1)
+            WHERE id = $1
+        `, [tabId]);
+
+        await client.query('COMMIT');
+        return { success: true };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Remove Item from Tab Error", e);
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
+async function closeTabAndProcessSale(tabId, paymentData) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const tabRes = await client.query('SELECT * FROM tabs WHERE id = $1 AND status = \'OPEN\'', [tabId]);
+        if (tabRes.rows.length === 0) throw new Error("La comanda no existe o ya está cerrada.");
+        const tab = tabRes.rows[0];
+
+        const itemsRes = await client.query(`
+            SELECT ti.*, p.name as product_name 
+            FROM tab_items ti
+            JOIN products p ON ti.product_id = p.id
+            WHERE ti.tab_id = $1
+        `, [tabId]);
+        const items = itemsRes.rows;
+
+        const saleItems = [];
+        for (const item of items) {
+            const getVariantQuery = `
+                 SELECT quantity FROM product_variants WHERE product_id = $1 AND variant_name = $2
+            `;
+            const varRes = await client.query(getVariantQuery, [item.product_id, item.variant_name]);
+
+            let multiplier = 1;
+            if (varRes.rows.length > 0) {
+                multiplier = varRes.rows[0].quantity;
+            }
+
+            const totalUnitsToDeduct = item.quantity * multiplier;
+
+            await client.query(`
+                UPDATE products 
+                SET stock_total = stock_total - $1
+                WHERE id = $2
+            `, [totalUnitsToDeduct, item.product_id]);
+
+            saleItems.push({
+                id: item.product_id,
+                name: item.product_name,
+                variant_name: item.variant_name,
+                qty: item.quantity,
+                sale_price: item.unit_price,
+                subtotal: item.subtotal
+            });
+        }
+
+        const motiveString = saleItems.map(i => `${i.name} (${i.variant_name || 'Estándar'}) x${i.qty}`).join(', ') + 
+            (paymentData.observation ? ` - Obs: ${paymentData.observation}` : '') + ` - Mesa: ${tab.table_id ? tab.table_id : 'Sin mesa'}`;
+
+        const insertMovementQuery = `
+            INSERT INTO movements (type, description, motive, user_name, payment_method, amount, details_json)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `;
+
+        await client.query(insertMovementQuery, [
+            'INGRESO',
+            paymentData.clientName || 'CLIENTE OCASIONAL',
+            motiveString,
+            paymentData.user || 'Cajero',
+            paymentData.method,
+            tab.total,
+            JSON.stringify({
+                items: saleItems,
+                received: paymentData.received,
+                change: paymentData.change,
+                tabId: tabId
+            })
+        ]);
+
+        await client.query(
+            'UPDATE tabs SET status = \'CLOSED\', closed_at = CURRENT_TIMESTAMP WHERE id = $1',
+            [tabId]
+        );
+
+        if (tab.table_id) {
+            await client.query('UPDATE tables SET status = \'Libre\' WHERE id = $1', [tab.table_id]);
+        }
+
+        await client.query('COMMIT');
+        return { success: true };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Close Tab Error", e);
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
+async function updateTabItems(tabId, items) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        // Delete all existing items
+        await client.query('DELETE FROM tab_items WHERE tab_id = $1', [tabId]);
+        
+        // Insert current items
+        for (const item of items) {
+            const subtotal = item.qty * item.price;
+            await client.query(
+                'INSERT INTO tab_items (tab_id, product_id, variant_name, quantity, unit_price, subtotal) VALUES ($1, $2, $3, $4, $5, $6)',
+                [tabId, item.id, item.variant_name || null, item.qty, item.price, subtotal]
+            );
+        }
+        
+        // Update Tab Total
+        await client.query(`
+            UPDATE tabs 
+            SET total = (SELECT COALESCE(SUM(subtotal), 0) FROM tab_items WHERE tab_id = $1)
+            WHERE id = $1
+        `, [tabId]);
+        
+        await client.query('COMMIT');
+        return { success: true };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Update Tab Items Error", e);
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
+async function splitTabAndProcessSale(tabId, splits) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const tabRes = await client.query("SELECT * FROM tabs WHERE id = $1 AND status = 'OPEN'", [tabId]);
+        if (tabRes.rows.length === 0) throw new Error("La comanda no existe o ya está cerrada.");
+        const tab = tabRes.rows[0];
+
+        // Validate all splits have items
+        for (let i = 0; i < splits.length; i++) {
+            if (!splits[i].items || splits[i].items.length === 0) {
+                throw new Error(`El grupo ${i + 1} no tiene productos asignados.`);
+            }
+        }
+
+        // Track unique product+variant for single stock deduction
+        const deductionMap = new Map();
+        for (const split of splits) {
+            for (const item of split.items) {
+                const key = `${item.product_id}|${item.variant_name || ''}`;
+                if (deductionMap.has(key)) {
+                    deductionMap.get(key).qty += item.qty;
+                } else {
+                    deductionMap.set(key, { product_id: item.product_id, variant_name: item.variant_name, qty: item.qty, unit_price: item.unit_price });
+                }
+            }
+        }
+
+        // Deduct stock once per unique product+variant
+        for (const entry of deductionMap.values()) {
+            const getVariantQuery = `
+                 SELECT quantity FROM product_variants WHERE product_id = $1 AND variant_name = $2
+            `;
+            const varRes = await client.query(getVariantQuery, [entry.product_id, entry.variant_name]);
+
+            let multiplier = 1;
+            if (varRes.rows.length > 0) {
+                multiplier = varRes.rows[0].quantity;
+            }
+
+            const totalUnitsToDeduct = entry.qty * multiplier;
+
+            await client.query(
+                'UPDATE products SET stock_total = stock_total - $1 WHERE id = $2',
+                [totalUnitsToDeduct, entry.product_id]
+            );
+        }
+
+        // Create one movement per split
+        for (let i = 0; i < splits.length; i++) {
+            const split = splits[i];
+            const splitTotal = split.items.reduce((sum, item) => sum + item.subtotal, 0);
+
+            const motiveString = split.items.map(item =>
+                `${item.product_name} (${item.variant_name || 'Estándar'}) x${item.qty}`
+            ).join(', ') + ` - Mesa: ${tab.table_id} (Split ${i + 1}/${splits.length})`;
+
+            await client.query(
+                `INSERT INTO movements (type, description, motive, user_name, payment_method, amount, details_json)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [
+                    'INGRESO',
+                    split.clientName || 'CLIENTE OCASIONAL',
+                    motiveString,
+                    'Cajero',
+                    split.paymentMethod,
+                    splitTotal,
+                    JSON.stringify({
+                        items: split.items,
+                        received: split.received || splitTotal,
+                        change: split.change || 0,
+                        tabId: tabId,
+                        splitGroup: i + 1,
+                        splitTotal: splits.length
+                    })
+                ]
+            );
+        }
+
+        // Close tab and free table
+        await client.query(
+            "UPDATE tabs SET status = 'CLOSED', closed_at = CURRENT_TIMESTAMP WHERE id = $1",
+            [tabId]
+        );
+
+        if (tab.table_id) {
+            await client.query("UPDATE tables SET status = 'Libre' WHERE id = $1", [tab.table_id]);
+        }
+
+        await client.query('COMMIT');
+        return { success: true };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Split Tab Error", e);
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
 module.exports = {
     initDatabase,
     pool,
@@ -801,5 +1357,24 @@ module.exports = {
     updateMovement,
     getMovementById,
     getCategories,
-    createCategory
+    createCategory,
+    // New exports
+    getTables,
+    createTable,
+    updateTableStatus,
+    updateTablePosition,
+    deleteTable,
+    getClients,
+    createClient,
+    updateClient,
+    deleteClient,
+    getOpenTabs,
+    getTabByTable,
+    getTabDetails,
+    openTab,
+    addItemToTab,
+    removeItemFromTab,
+    closeTabAndProcessSale,
+    updateTabItems,
+    splitTabAndProcessSale
 };

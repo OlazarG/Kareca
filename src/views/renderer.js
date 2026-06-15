@@ -437,7 +437,14 @@ function addVariantRow(name = '', code = '', qty = 1, price = '') {
 
     row.innerHTML = `
         <td><input type="text" class="form-control" placeholder="Ej: Six Pack" required name="v-name" value="${name}"></td>
-        <td><input type="text" class="form-control" required name="v-code" placeholder="Código" value="${code}"></td>
+        <td>
+            <div class="input-group input-group-sm">
+                <input type="text" class="form-control" required name="v-code" placeholder="Código" value="${code}">
+                <button class="btn btn-outline-primary" type="button" onclick="openBarcodeGenerator(this)" title="Generar código de barras">
+                    <i class="bi bi-upc-scan"></i>
+                </button>
+            </div>
+        </td>
         <td><input type="number" class="form-control" min="1" required name="v-qty" value="${qty}"></td>
         <td><input type="text" class="form-control currency-input" required name="v-price" placeholder="0" value="${formattedPrice}"></td>
         <td><button type="button" class="btn btn-danger btn-sm" onclick="this.parentElement.parentElement.remove()">X</button></td>
@@ -462,7 +469,14 @@ function resetForm() {
     tbody.innerHTML = `
         <tr class="variant-row">
             <td><input type="text" class="form-control" value="Unidad" required name="v-name"></td>
-            <td><input type="text" class="form-control" required name="v-code" placeholder="Escanee Código"></td>
+            <td>
+                <div class="input-group input-group-sm">
+                    <input type="text" class="form-control" required name="v-code" placeholder="Escanee Código">
+                    <button class="btn btn-outline-primary" type="button" onclick="openBarcodeGenerator(this)" title="Generar código de barras">
+                        <i class="bi bi-upc-scan"></i>
+                    </button>
+                </div>
+            </td>
             <td><input type="number" class="form-control" value="1" min="1" required name="v-gty" readonly></td>
             <td><input type="text" class="form-control currency-input" required name="v-price" placeholder="0"></td>
             <td></td> 
@@ -636,7 +650,14 @@ async function editProduct(id) {
             row.classList.add('variant-row');
             row.innerHTML = `
                 <td><input type="text" class="form-control" value="${v.variant_name}" required name="v-name"></td>
-                <td><input type="text" class="form-control" value="${v.barcode}" required name="v-code"></td>
+                <td>
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control" value="${v.barcode}" required name="v-code">
+                        <button class="btn btn-outline-primary" type="button" onclick="openBarcodeGenerator(this)" title="Generar código de barras">
+                            <i class="bi bi-upc-scan"></i>
+                        </button>
+                    </div>
+                </td>
                 <td><input type="number" class="form-control" value="${v.quantity}" min="1" required name="v-qty" ${isUnit ? 'readonly' : ''}></td>
                 <td><input type="text" class="form-control currency-input" value="${formattedPrice}" required name="v-price" min="0"></td>
                 <td>${isUnit ? '' : '<button type="button" class="btn btn-danger btn-sm" onclick="this.parentElement.parentElement.remove()">X</button>'}</td>
@@ -2779,6 +2800,219 @@ async function confirmDeleteClient(id, name) {
         } catch (e) {
             console.error(e);
             Swal.fire('Error', 'No se pudo eliminar el cliente.', 'error');
+        }
+    }
+}
+
+// --- Barcode Generator Logic ---
+
+let currentBarcodeBase64 = null;
+
+function openBarcodeGenerator(btnElement) {
+    const modal = new bootstrap.Modal(document.getElementById('barcodeGeneratorModal'));
+    const textInput = document.getElementById('barcode-text');
+    const previewImg = document.getElementById('barcode-preview-img');
+    const previewPlaceholder = document.getElementById('barcode-preview-placeholder');
+    const actions = document.getElementById('barcode-actions');
+    const targetRow = document.getElementById('barcode-target-row');
+
+    previewImg.style.display = 'none';
+    previewPlaceholder.style.display = 'block';
+    actions.style.display = 'none';
+    currentBarcodeBase64 = null;
+
+    if (btnElement) {
+        const row = btnElement.closest('.variant-row');
+        if (row) {
+            const codeInput = row.querySelector('input[name="v-code"]');
+            if (codeInput) {
+                textInput.value = codeInput.value;
+                targetRow.value = codeInput.name + '_' + Array.from(row.parentElement.children).indexOf(row);
+            }
+        }
+    } else {
+        textInput.value = '';
+        targetRow.value = '';
+    }
+
+    modal.show();
+    setTimeout(() => textInput.focus(), 300);
+}
+
+function onBarcodeTextChange() {
+    const text = document.getElementById('barcode-text').value.trim();
+    if (text.length > 1) {
+        generateBarcode();
+    }
+}
+
+async function generateBarcode() {
+    const text = document.getElementById('barcode-text').value.trim();
+    const type = document.getElementById('barcode-type').value;
+    const scale = parseInt(document.getElementById('barcode-scale').value);
+
+    if (!text) {
+        Swal.fire('Atención', 'Ingrese un texto para codificar.', 'warning');
+        return;
+    }
+
+    const previewImg = document.getElementById('barcode-preview-img');
+    const previewPlaceholder = document.getElementById('barcode-preview-placeholder');
+    const actions = document.getElementById('barcode-actions');
+
+    previewImg.style.display = 'none';
+    previewPlaceholder.style.display = 'block';
+    previewPlaceholder.innerText = 'Generando...';
+
+    try {
+        const result = await window.electronAPI.generateBarcodeImage({ text, type, scale });
+
+        if (result.success) {
+            currentBarcodeBase64 = result.image;
+            previewImg.src = 'data:image/png;base64,' + result.image;
+            previewImg.style.display = 'block';
+            previewPlaceholder.style.display = 'none';
+            actions.style.display = 'flex';
+        } else {
+            previewPlaceholder.innerText = 'Error: ' + result.error;
+            actions.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Barcode generation error:', error);
+        previewPlaceholder.innerText = 'Error al generar código.';
+        actions.style.display = 'none';
+    }
+}
+
+async function copyBarcodeImage() {
+    if (!currentBarcodeBase64) return;
+
+    try {
+        const response = await fetch('data:image/png;base64,' + currentBarcodeBase64);
+        const blob = await response.blob();
+        await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob })
+        ]);
+        Swal.fire({
+            toast: true, position: 'top-end',
+            icon: 'success', title: 'Imagen copiada al portapapeles',
+            timer: 1500, showConfirmButton: false
+        });
+    } catch (err) {
+        console.error('Clipboard error:', err);
+        Swal.fire('Error', 'No se pudo copiar la imagen al portapapeles.', 'error');
+    }
+}
+
+function downloadBarcodeImage() {
+    if (!currentBarcodeBase64) return;
+
+    const text = document.getElementById('barcode-text').value.trim() || 'codigo';
+    const link = document.createElement('a');
+    link.download = `codigo_${text.replace(/[^a-zA-Z0-9]/g, '_')}.png`;
+    link.href = 'data:image/png;base64,' + currentBarcodeBase64;
+    link.click();
+}
+
+async function copyBarcodeText() {
+    const text = document.getElementById('barcode-text').value.trim();
+    if (!text) return;
+
+    try {
+        await navigator.clipboard.writeText(text);
+        Swal.fire({
+            toast: true, position: 'top-end',
+            icon: 'success', title: 'Texto copiado al portapapeles',
+            timer: 1500, showConfirmButton: false
+        });
+    } catch (err) {
+        console.error('Clipboard error:', err);
+        Swal.fire('Error', 'No se pudo copiar el texto.', 'error');
+    }
+}
+
+function assignBarcodeToVariant() {
+    const text = document.getElementById('barcode-text').value.trim();
+    if (!text) return;
+
+    const targetRow = document.getElementById('barcode-target-row').value;
+    const variantRows = document.querySelectorAll('.variant-row');
+
+    if (targetRow) {
+        const parts = targetRow.split('_');
+        const idx = parseInt(parts[1]);
+        if (!isNaN(idx) && variantRows[idx]) {
+            const input = variantRows[idx].querySelector('input[name="v-code"]');
+            if (input) {
+                input.value = text;
+                Swal.fire({
+                    toast: true, position: 'top-end',
+                    icon: 'success', title: 'Código asignado a la variante',
+                    timer: 1500, showConfirmButton: false
+                });
+                const modal = bootstrap.Modal.getInstance(document.getElementById('barcodeGeneratorModal'));
+                if (modal) modal.hide();
+                return;
+            }
+        }
+    }
+
+    const options = [];
+    variantRows.forEach((row, i) => {
+        const nameInput = row.querySelector('input[name="v-name"]');
+        const codeInput = row.querySelector('input[name="v-code"]');
+        const name = nameInput ? nameInput.value : `Variante ${i + 1}`;
+        const code = codeInput ? codeInput.value : '';
+        options.push({ index: i, name, code });
+    });
+
+    if (options.length === 0) {
+        Swal.fire('Atención', 'No hay variantes para asignar el código.', 'info');
+        return;
+    }
+
+    let html = '<div class="list-group text-start">';
+    options.forEach((opt, i) => {
+        html += `
+            <button class="list-group-item list-group-item-action" onclick="assignToVariantIndex(${i})">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="fw-bold">${opt.name}</span>
+                    <small class="text-muted">${opt.code || '(vacío)'}</small>
+                </div>
+            </button>
+        `;
+    });
+    html += '</div>';
+
+    window._barcodeVariantOptions = options;
+    Swal.fire({
+        title: 'Seleccione variante',
+        html: html,
+        showConfirmButton: false,
+        showCloseButton: true,
+        width: '400px'
+    });
+}
+
+function assignToVariantIndex(optIndex) {
+    const text = document.getElementById('barcode-text').value.trim();
+    const options = window._barcodeVariantOptions;
+    if (!options || !options[optIndex]) return;
+
+    const variantRows = document.querySelectorAll('.variant-row');
+    const row = variantRows[options[optIndex].index];
+    if (row) {
+        const input = row.querySelector('input[name="v-code"]');
+        if (input) {
+            input.value = text;
+            Swal.close();
+            Swal.fire({
+                toast: true, position: 'top-end',
+                icon: 'success', title: 'Código asignado a la variante',
+                timer: 1500, showConfirmButton: false
+            });
+            const modal = bootstrap.Modal.getInstance(document.getElementById('barcodeGeneratorModal'));
+            if (modal) modal.hide();
         }
     }
 }

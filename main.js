@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const db = require('./src/database/db');
 const fs = require('fs');
+const bwipjs = require('bwip-js');
 
 // ... (Create Window Code) ...
 
@@ -213,6 +214,44 @@ app.on('window-all-closed', () => {
 });
 
 // --- IPC Handlers ---
+
+ipcMain.handle('generate-barcode-image', async (event, { text, type, scale, height }) => {
+    try {
+        if (!text || !text.trim()) {
+            return { success: false, error: 'Texto requerido' };
+        }
+
+        let bcid = type || 'code128';
+        if (bcid === 'ean13') {
+            const digits = text.replace(/\D/g, '');
+            if (digits.length > 12) {
+                text = digits.substring(0, 12);
+            } else {
+                text = digits.padEnd(12, '0');
+            }
+        }
+
+        const png = await bwipjs.toBuffer({
+            bcid: bcid,
+            text: text,
+            scale: scale || 3,
+            height: height || 15,
+            includetext: true,
+            textxalign: 'center',
+            backgroundcolor: 'FFFFFF',
+            padding: 5
+        });
+
+        return {
+            success: true,
+            image: png.toString('base64'),
+            format: 'png'
+        };
+    } catch (error) {
+        console.error('Barcode generation error:', error);
+        return { success: false, error: error.message };
+    }
+});
 
 ipcMain.handle('get-products', async (event, { search, category, page, limit } = {}) => {
     return await db.getProducts(search, category, page, limit);

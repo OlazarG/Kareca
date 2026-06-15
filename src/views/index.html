@@ -274,10 +274,15 @@
             <div id="products-section" style="display:none;">
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <h2>Inventario</h2>
-                    <button class="btn btn-success" type="button" data-bs-toggle="collapse"
-                        data-bs-target="#newProductForm" id="btn-toggle-form">
-                        + Nuevo Producto
-                    </button>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-primary" type="button" onclick="openBarcodeGenerator()">
+                            <i class="bi bi-upc-scan me-1"></i> Generar Código
+                        </button>
+                        <button class="btn btn-success" type="button" data-bs-toggle="collapse"
+                            data-bs-target="#newProductForm" id="btn-toggle-form">
+                            + Nuevo Producto
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Filters -->
@@ -368,8 +373,16 @@
                                     <tr class="variant-row">
                                         <td><input type="text" class="form-control" value="Unidad" required
                                                 name="v-name"></td>
-                                        <td><input type="text" class="form-control" required name="v-code"
-                                                placeholder="Código"></td>
+                                        <td>
+                                            <div class="input-group input-group-sm">
+                                                <input type="text" class="form-control" required name="v-code"
+                                                    placeholder="Código">
+                                                <button class="btn btn-outline-primary" type="button"
+                                                    onclick="openBarcodeGenerator(this)" title="Generar código de barras">
+                                                    <i class="bi bi-upc-scan"></i>
+                                                </button>
+                                            </div>
+                                        </td>
                                         <td><input type="number" class="form-control" value="1" min="1" required
                                                 name="v-gkty" readonly></td>
                                         <td><input type="text" class="form-control currency-input" required
@@ -1091,6 +1104,70 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
                     <button type="button" class="btn btn-warning" onclick="confirmEditSale()">Guardar Cambios</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Barcode Generator Modal -->
+    <div class="modal fade" id="barcodeGeneratorModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-upc-scan me-2"></i>Generador de Códigos</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="barcode-target-row" value="">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Texto a codificar</label>
+                        <input type="text" class="form-control form-control-lg" id="barcode-text"
+                            placeholder="Ej: AUREA-001" oninput="onBarcodeTextChange()">
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Tipo de código</label>
+                            <select class="form-select" id="barcode-type" onchange="onBarcodeTextChange()">
+                                <option value="code128">CODE128</option>
+                                <option value="ean13">EAN-13</option>
+                                <option value="qrcode">QR</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Tamaño</label>
+                            <select class="form-select" id="barcode-scale">
+                                <option value="1">Pequeño</option>
+                                <option value="2">Mediano</option>
+                                <option value="3" selected>Grande</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="text-center mb-3">
+                        <div id="barcode-preview" class="border rounded p-3 bg-light d-flex align-items-center justify-content-center" style="min-height: 120px;">
+                            <p class="text-muted mb-0" id="barcode-preview-placeholder">Ingrese texto y presione "Generar"</p>
+                            <img id="barcode-preview-img" style="display: none; max-width: 100%;" alt="Vista previa">
+                        </div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2" id="barcode-actions" style="display: none;">
+                        <button class="btn btn-outline-primary" onclick="copyBarcodeImage()">
+                            <i class="bi bi-clipboard me-1"></i> Copiar PNG
+                        </button>
+                        <button class="btn btn-outline-success" onclick="downloadBarcodeImage()">
+                            <i class="bi bi-download me-1"></i> Descargar
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="copyBarcodeText()">
+                            <i class="bi bi-files me-1"></i> Copiar Texto
+                        </button>
+                        <button class="btn btn-success" id="btn-assign-barcode" onclick="assignBarcodeToVariant()">
+                            <i class="bi bi-check-lg me-1"></i> Asignar a Variante
+                        </button>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" onclick="generateBarcode()">
+                        <i class="bi bi-arrow-repeat me-1"></i> Generar
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
                 </div>
             </div>
         </div>

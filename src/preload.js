@@ -24,6 +24,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updateMovement: (data) => ipcRenderer.invoke('update-movement', data),
     getMovementDetails: (id) => ipcRenderer.invoke('get-movement-details', id),
 
+    // Barcode Generator
+    generateBarcodeImage: (data) => ipcRenderer.invoke('generate-barcode-image', data),
+
     // Categories
     getCategories: () => ipcRenderer.invoke('get-categories'),
     createCategory: (name) => ipcRenderer.invoke('create-category', name),

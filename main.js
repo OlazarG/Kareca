@@ -412,3 +412,5 @@ ipcMain.handle('update-tab-items', async (event, tabId, items) => {
 ipcMain.handle('split-tab-and-process-sale', async (event, tabId, splits) => {
     return await db.splitTabAndProcessSale(tabId, splits);
 });
+
+// --- Usuarios IPC test lazygit

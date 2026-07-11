@@ -53,5 +53,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     removeItemFromTab: (tabId, itemId) => ipcRenderer.invoke('remove-item-from-tab', tabId, itemId),
     closeTabAndProcessSale: (tabId, paymentData) => ipcRenderer.invoke('close-tab-and-process-sale', tabId, paymentData),
     updateTabItems: (tabId, items) => ipcRenderer.invoke('update-tab-items', tabId, items),
-    splitTabAndProcessSale: (tabId, splits) => ipcRenderer.invoke('split-tab-and-process-sale', tabId, splits)
+    splitTabAndProcessSale: (tabId, splits) => ipcRenderer.invoke('split-tab-and-process-sale', tabId, splits),
+
+    // Authentication & Users
+    login: (username, password) => ipcRenderer.invoke('login', username, password),
+    getUsers: () => ipcRenderer.invoke('get-users'),
+    getRoles: () => ipcRenderer.invoke('get-roles'),
+    createUser: (userData) => ipcRenderer.invoke('create-user', userData),
+    updateUser: (id, userData) => ipcRenderer.invoke('update-user', id, userData),
+    deleteUser: (id) => ipcRenderer.invoke('delete-user', id),
+    getPermissions: () => ipcRenderer.invoke('get-permissions'),
+    getRolePermissions: (roleId) => ipcRenderer.invoke('get-role-permissions', roleId),
+    updateRolePermissions: (roleId, permissionIds) => ipcRenderer.invoke('update-role-permissions', roleId, permissionIds)
 });

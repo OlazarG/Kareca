@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { Pool } = require('pg');
+const crypto = require('crypto');
 
 const pool = new Pool({
     user: process.env.DB_USER,
@@ -24,6 +25,20 @@ pool.on('connect', (client) => {
         client.query("SET timezone = 'UTC'");
     }
 });
+
+// Helper functions for Password Hashing and Verification using native crypto pbkdf2
+function hashPassword(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+    return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedHash) {
+    if (!storedHash || !storedHash.includes(':')) return false;
+    const [salt, hash] = storedHash.split(':');
+    const verifyHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
+    return hash === verifyHash;
+}
 
 // Initialize Database Schema
 async function initDatabase() {
@@ -248,6 +263,107 @@ async function initDatabase() {
         if (checkDeclaredCol.rows.length === 0) {
             console.log("Migrating: Adding declared_cash column to cash_sessions...");
             await client.query("ALTER TABLE cash_sessions ADD COLUMN declared_cash DECIMAL(15,2) DEFAULT 0");
+        }
+
+        // New Table: roles
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS roles (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(50) UNIQUE NOT NULL,
+                description TEXT
+            );
+        `);
+
+        // New Table: permissions
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS permissions (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100) UNIQUE NOT NULL,
+                description TEXT
+            );
+        `);
+
+        // New Table: role_permissions
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
+                permission_id INTEGER REFERENCES permissions(id) ON DELETE CASCADE,
+                PRIMARY KEY (role_id, permission_id)
+            );
+        `);
+
+        // New Table: users
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL,
+                status BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        // Seed Roles
+        const checkRoles = await client.query('SELECT COUNT(*) FROM roles');
+        if (parseInt(checkRoles.rows[0].count) === 0) {
+            console.log("Seeding default roles...");
+            await client.query(`INSERT INTO roles (name, description) VALUES 
+                ('Administrador', 'Acceso total al sistema'),
+                ('Cajero', 'Acceso a ventas, clientes, mesas y control de caja'),
+                ('Vendedor', 'Acceso a ventas y clientes')
+            `);
+        }
+
+        // Seed Permissions
+        const checkPerms = await client.query('SELECT COUNT(*) FROM permissions');
+        if (parseInt(checkPerms.rows[0].count) === 0) {
+            console.log("Seeding default permissions...");
+            await client.query(`INSERT INTO permissions (name, description) VALUES 
+                ('ver_reportes', 'Ver reportes y estadísticas de ventas y movimientos'),
+                ('editar_ventas', 'Editar/anular movimientos y ventas realizadas'),
+                ('gestionar_productos', 'Crear, editar y eliminar productos e inventario'),
+                ('gestionar_caja', 'Abrir, cerrar y controlar la caja registradora'),
+                ('gestionar_usuarios', 'Crear, editar y eliminar usuarios del sistema'),
+                ('realizar_ventas', 'Acceso al módulo de punto de venta (POS) y cobros'),
+                ('realizar_compras', 'Acceso al módulo de compras/reposiciones de mercadería'),
+                ('gestionar_mesas', 'Agregar, editar y eliminar mesas del salón'),
+                ('gestionar_clientes', 'Crear, editar y eliminar clientes en el sistema')
+            `);
+        }
+
+        // Seed Role Permissions mappings
+        const checkRolePerms = await client.query('SELECT COUNT(*) FROM role_permissions');
+        if (parseInt(checkRolePerms.rows[0].count) === 0) {
+            console.log("Seeding default role permissions mapping...");
+            // Admin role get all
+            const adminRole = await client.query("SELECT id FROM roles WHERE name = 'Administrador'");
+            const adminId = adminRole.rows[0].id;
+            await client.query(`INSERT INTO role_permissions (role_id, permission_id) 
+                SELECT $1, id FROM permissions`, [adminId]);
+
+            // Cajero role get: realizar_ventas, gestionar_caja, gestionar_clientes, gestionar_mesas
+            const cajeroRole = await client.query("SELECT id FROM roles WHERE name = 'Cajero'");
+            const cajeroId = cajeroRole.rows[0].id;
+            await client.query(`INSERT INTO role_permissions (role_id, permission_id)
+                SELECT $1, id FROM permissions WHERE name IN ('realizar_ventas', 'gestionar_caja', 'gestionar_clientes', 'gestionar_mesas')`, [cajeroId]);
+
+            // Vendedor role get: realizar_ventas, gestionar_clientes
+            const vendedorRole = await client.query("SELECT id FROM roles WHERE name = 'Vendedor'");
+            const vendedorId = vendedorRole.rows[0].id;
+            await client.query(`INSERT INTO role_permissions (role_id, permission_id)
+                SELECT $1, id FROM permissions WHERE name IN ('realizar_ventas', 'gestionar_clientes')`, [vendedorId]);
+        }
+
+        // Seed Admin User
+        const checkUsers = await client.query('SELECT COUNT(*) FROM users');
+        if (parseInt(checkUsers.rows[0].count) === 0) {
+            console.log("Seeding default admin user...");
+            const adminRole = await client.query("SELECT id FROM roles WHERE name = 'Administrador'");
+            const adminRoleId = adminRole.rows[0].id;
+            const defaultAdminHash = hashPassword('admin');
+            await client.query(`INSERT INTO users (username, password_hash, role_id, status) VALUES 
+                ('admin', $1, $2, TRUE)`, [defaultAdminHash, adminRoleId]);
         }
 
         await client.query('COMMIT');
@@ -1340,7 +1456,169 @@ async function splitTabAndProcessSale(tabId, splits) {
     }
 }
 
+// --- Authentication & User Management ---
+
+async function authenticateUser(username, password) {
+    const res = await pool.query(`
+        SELECT u.*, r.name as role_name 
+        FROM users u 
+        LEFT JOIN roles r ON u.role_id = r.id 
+        WHERE u.username = $1 AND u.status = TRUE
+    `, [username]);
+
+    if (res.rows.length === 0) {
+        return { success: false, message: 'Usuario no encontrado o inactivo.' };
+    }
+
+    const user = res.rows[0];
+    const isPasswordCorrect = verifyPassword(password, user.password_hash);
+    if (!isPasswordCorrect) {
+        return { success: false, message: 'Contraseña incorrecta.' };
+    }
+
+    // Get permissions
+    const permsRes = await pool.query(`
+        SELECT p.name 
+        FROM role_permissions rp
+        JOIN permissions p ON rp.permission_id = p.id
+        WHERE rp.role_id = $1
+    `, [user.role_id]);
+
+    const permissions = permsRes.rows.map(row => row.name);
+
+    return {
+        success: true,
+        user: {
+            id: user.id,
+            username: user.username,
+            role_name: user.role_name,
+            role_id: user.role_id,
+            permissions: permissions
+        }
+    };
+}
+
+async function getUsers() {
+    const res = await pool.query(`
+        SELECT u.id, u.username, u.role_id, r.name as role_name, u.status, u.created_at
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        ORDER BY u.username ASC
+    `);
+    return res.rows;
+}
+
+async function getRoles() {
+    const res = await pool.query('SELECT * FROM roles ORDER BY name ASC');
+    return res.rows;
+}
+
+async function createUser(userData) {
+    const { username, password, role_id } = userData;
+    const passwordHash = hashPassword(password);
+    try {
+        await pool.query(
+            'INSERT INTO users (username, password_hash, role_id, status) VALUES ($1, $2, $3, TRUE)',
+            [username, passwordHash, role_id]
+        );
+        return { success: true };
+    } catch (e) {
+        if (e.code === '23505') {
+            throw new Error(`El usuario '${username}' ya existe.`);
+        }
+        throw e;
+    }
+}
+
+async function updateUser(id, userData) {
+    const { username, password, role_id, status } = userData;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        if (password && password.trim() !== '') {
+            const passwordHash = hashPassword(password);
+            await client.query(
+                'UPDATE users SET username = $1, password_hash = $2, role_id = $3, status = $4 WHERE id = $5',
+                [username, passwordHash, role_id, status, id]
+            );
+        } else {
+            await client.query(
+                'UPDATE users SET username = $1, role_id = $2, status = $3 WHERE id = $4',
+                [username, role_id, status, id]
+            );
+        }
+        await client.query('COMMIT');
+        return { success: true };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        if (e.code === '23505') {
+            throw new Error(`El nombre de usuario '${username}' ya está en uso.`);
+        }
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
+async function deleteUser(id) {
+    const checkRes = await pool.query('SELECT username FROM users WHERE id = $1', [id]);
+    if (checkRes.rows.length > 0 && checkRes.rows[0].username === 'admin') {
+        throw new Error('No se puede eliminar el usuario administrador principal (admin).');
+    }
+
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    return { success: true };
+}
+
+async function getPermissions() {
+    const res = await pool.query('SELECT * FROM permissions ORDER BY description ASC');
+    return res.rows;
+}
+
+async function getRolePermissions(roleId) {
+    const res = await pool.query('SELECT permission_id FROM role_permissions WHERE role_id = $1', [roleId]);
+    return res.rows.map(row => row.permission_id);
+}
+
+async function updateRolePermissions(roleId, permissionIds) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        // Delete existing role permissions mapping
+        await client.query('DELETE FROM role_permissions WHERE role_id = $1', [roleId]);
+
+        // Insert new mappings
+        if (permissionIds && permissionIds.length > 0) {
+            for (const permId of permissionIds) {
+                await client.query(
+                    'INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2)',
+                    [roleId, permId]
+                );
+            }
+        }
+
+        await client.query('COMMIT');
+        return { success: true };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Update Role Permissions Error", e);
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
 module.exports = {
+    getPermissions,
+    getRolePermissions,
+    updateRolePermissions,
+    authenticateUser,
+    getUsers,
+    getRoles,
+    createUser,
+    updateUser,
+    deleteUser,
     initDatabase,
     pool,
     getProducts,

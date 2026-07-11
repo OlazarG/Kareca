@@ -413,4 +413,41 @@ ipcMain.handle('split-tab-and-process-sale', async (event, tabId, splits) => {
     return await db.splitTabAndProcessSale(tabId, splits);
 });
 
-// --- Usuarios IPC test lazygit
+// --- Usuarios IPC ---
+ipcMain.handle('login', async (event, username, password) => {
+    return await db.authenticateUser(username, password);
+});
+
+ipcMain.handle('get-users', async () => {
+    return await db.getUsers();
+});
+
+ipcMain.handle('get-roles', async () => {
+    return await db.getRoles();
+});
+
+ipcMain.handle('create-user', async (event, userData) => {
+    return await db.createUser(userData);
+});
+
+ipcMain.handle('update-user', async (event, id, userData) => {
+    return await db.updateUser(id, userData);
+});
+
+ipcMain.handle('delete-user', async (event, id) => {
+    return await db.deleteUser(id);
+});
+
+// --- Permisos IPC ---
+ipcMain.handle('get-permissions', async () => {
+    return await db.getPermissions();
+});
+
+ipcMain.handle('get-role-permissions', async (event, roleId) => {
+    return await db.getRolePermissions(roleId);
+});
+
+ipcMain.handle('update-role-permissions', async (event, roleId, permissionIds) => {
+    return await db.updateRolePermissions(roleId, permissionIds);
+});
+

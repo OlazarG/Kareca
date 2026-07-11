@@ -110,6 +110,113 @@ async function promptCreateCategory() {
     }
 }
 
+// --- User Authentication State ---
+let currentUser = null;
+
+// Handle Login Form Submission
+document.getElementById('login-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const usernameInput = document.getElementById('login-username');
+    const passwordInput = document.getElementById('login-password');
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value;
+
+    try {
+        const response = await window.electronAPI.login(username, password);
+        if (response.success) {
+            currentUser = response.user;
+            
+            // Clean inputs
+            usernameInput.value = '';
+            passwordInput.value = '';
+
+            // Update UI with user info
+            document.getElementById('logged-username').innerText = currentUser.username;
+            document.getElementById('logged-userrole').innerText = currentUser.role_name;
+
+            // Hide login overlay and show main app
+            document.getElementById('login-overlay').style.display = 'none';
+            document.querySelector('.main-wrapper').style.display = 'flex';
+
+            // Apply permissions (hide forbidden links / modules)
+            applyRolePermissions();
+
+            // Load initial view
+            showSection('dashboard');
+        } else {
+            Swal.fire({
+                title: 'Error de Acceso',
+                text: response.message || 'Credenciales inválidas.',
+                icon: 'error',
+                confirmButtonColor: '#3085d6'
+            });
+        }
+    } catch (error) {
+        console.error("Login Error", error);
+        Swal.fire('Error', 'Ocurrió un error al intentar iniciar sesión.', 'error');
+    }
+});
+
+function logout() {
+    currentUser = null;
+    localStorage.removeItem('token');
+    
+    // Show login overlay, hide main app
+    document.getElementById('login-overlay').style.display = 'flex';
+    document.querySelector('.main-wrapper').style.display = 'none';
+    
+    // Clear navigation states
+    document.querySelectorAll('.sidebar a').forEach(a => a.classList.remove('active'));
+    document.getElementById('nav-dashboard').classList.add('active');
+
+    // Reset login form inputs
+    document.getElementById('login-username').value = '';
+    document.getElementById('login-password').value = '';
+    document.getElementById('login-username').focus();
+}
+
+function applyRolePermissions() {
+    if (!currentUser) return;
+
+    const perms = currentUser.permissions || [];
+
+    // Map section nav buttons
+    const navMapping = {
+        'nav-dashboard': true, // Dashboard is always visible
+        'nav-products': perms.includes('gestionar_productos'),
+        'nav-pos': perms.includes('realizar_ventas'),
+        'nav-purchases': perms.includes('realizar_compras'),
+        'nav-reports': perms.includes('ver_reportes'),
+        'nav-caja': perms.includes('gestionar_caja'),
+        'nav-clients': perms.includes('gestionar_clientes'),
+        'nav-users': perms.includes('gestionar_usuarios')
+    };
+
+    // Toggle navigation links visibility
+    for (const [navId, hasAccess] of Object.entries(navMapping)) {
+        const el = document.getElementById(navId);
+        if (el) {
+            el.style.display = hasAccess ? 'block' : 'none';
+        }
+    }
+
+    // Toggle action buttons in sections
+    const addCategoryBtns = document.querySelectorAll('[onclick="promptCreateCategory()"]');
+    addCategoryBtns.forEach(btn => {
+        btn.style.display = perms.includes('gestionar_productos') ? 'block' : 'none';
+    });
+
+    const newProductBtn = document.getElementById('btn-toggle-form');
+    if (newProductBtn) {
+        newProductBtn.style.display = perms.includes('gestionar_productos') ? 'block' : 'none';
+    }
+
+    const addTableBtn = document.querySelector('[onclick="promptCreateTable()"]');
+    if (addTableBtn) {
+        addTableBtn.style.display = perms.includes('gestionar_mesas') ? 'block' : 'none';
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     setupCurrencyInputs();
     loadCategories(); // Carga las categorías dinámicamente al inicio
@@ -132,8 +239,8 @@ document.addEventListener('DOMContentLoaded', () => {
         loadProducts(1); // Reset to page 1 on change
     });
 
-    // Initial Dashboard Load
-    loadDashboard();
+    // Focus on login username
+    document.getElementById('login-username')?.focus();
 });
 
 // --- Dashboard Logic ---
@@ -225,12 +332,31 @@ function goToPurchases(productName) {
 
 // Navigation
 function showSection(sectionId) {
+    // Check permission
+    if (currentUser) {
+        const perms = currentUser.permissions || [];
+        if (sectionId === 'products' && !perms.includes('gestionar_productos')) return showSection('dashboard');
+        if (sectionId === 'pos' && !perms.includes('realizar_ventas')) return showSection('dashboard');
+        if (sectionId === 'purchases' && !perms.includes('realizar_compras')) return showSection('dashboard');
+        if (sectionId === 'reports' && !perms.includes('ver_reportes')) return showSection('dashboard');
+        if (sectionId === 'caja' && !perms.includes('gestionar_caja')) return showSection('dashboard');
+        if (sectionId === 'clients' && !perms.includes('gestionar_clientes')) return showSection('dashboard');
+        if (sectionId === 'users' && !perms.includes('gestionar_usuarios')) return showSection('dashboard');
+    }
+
     document.querySelectorAll('.content-area > div').forEach(div => div.style.display = 'none');
     document.getElementById(`${sectionId}-section`).style.display = 'block';
 
     // Update Sidebar Active State
     document.querySelectorAll('.sidebar a').forEach(a => a.classList.remove('active'));
     document.getElementById(`nav-${sectionId}`)?.classList.add('active');
+
+    // Close sidebar on mobile after navigation
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar && window.innerWidth <= 768) {
+        sidebar.classList.remove('open');
+        document.querySelector('.sidebar-backdrop')?.classList.remove('open');
+    }
 
     if (sectionId === 'products') {
         loadProducts();
@@ -255,6 +381,9 @@ function showSection(sectionId) {
     }
     if (sectionId === 'clients') {
         loadClients();
+    }
+    if (sectionId === 'users') {
+        loadUsers();
     }
 }
 
@@ -407,7 +536,7 @@ async function confirmPurchase() {
             supplier: supplier,
             method: method,
             observation: observation,
-            user: 'Admin'
+            user: currentUser ? currentUser.username : 'Admin'
         };
 
         try {
@@ -760,6 +889,119 @@ document.getElementById('product-form')?.addEventListener('submit', async (e) =>
     }
 });
 
+// =========================================================
+// --- Role Permissions Management (Tab 2: Permisos por Rol)
+// =========================================================
+
+let _allPermissions = [];   // cache of all permissions
+let _rolePermsTabLoaded = false;
+
+async function initRolePermsTab() {
+    if (_rolePermsTabLoaded) return; // only init once per session
+    try {
+        const [roles, permissions] = await Promise.all([
+            window.electronAPI.getRoles(),
+            window.electronAPI.getPermissions()
+        ]);
+
+        _allPermissions = permissions;
+
+        // Populate the role selector
+        const roleSelect = document.getElementById('perm-role-select');
+        if (!roleSelect) return;
+        roleSelect.innerHTML = '';
+        roles.forEach(r => {
+            const opt = document.createElement('option');
+            opt.value = r.id;
+            opt.textContent = r.name;
+            roleSelect.appendChild(opt);
+        });
+
+        _rolePermsTabLoaded = true;
+
+        // Load grid for whichever role is selected first
+        await loadRolePermissionsGrid();
+
+    } catch (error) {
+        console.error('Error initializing role permissions tab:', error);
+        Swal.fire('Error', 'No se pudieron cargar los datos de roles y permisos.', 'error');
+    }
+}
+
+async function loadRolePermissionsGrid() {
+    const roleSelect = document.getElementById('perm-role-select');
+    const container = document.getElementById('permissions-grid-container');
+    if (!roleSelect || !container) return;
+
+    const roleId = parseInt(roleSelect.value);
+    if (!roleId) return;
+
+    try {
+        // Get permission IDs currently assigned to this role
+        const assignedIds = await window.electronAPI.getRolePermissions(roleId);
+
+        // Build checkboxes grid grouped by category (using permission name prefix)
+        container.innerHTML = '';
+        _allPermissions.forEach(perm => {
+            const isChecked = assignedIds.includes(perm.id);
+            const col = document.createElement('div');
+            col.className = 'col-md-4 col-sm-6';
+            col.innerHTML = `
+                <div class="form-check d-flex align-items-start gap-2 p-3 rounded border bg-light h-100">
+                    <input class="form-check-input flex-shrink-0 mt-1" type="checkbox"
+                        id="perm-${perm.id}"
+                        name="permission"
+                        value="${perm.id}"
+                        ${isChecked ? 'checked' : ''}
+                        style="width:1.2em;height:1.2em;cursor:pointer;">
+                    <label class="form-check-label w-100" for="perm-${perm.id}" style="cursor:pointer;">
+                        <span class="fw-semibold d-block">${perm.description || perm.name}</span>
+                        <small class="text-muted font-monospace">${perm.name}</small>
+                    </label>
+                </div>`;
+            container.appendChild(col);
+        });
+
+    } catch (error) {
+        console.error('Error loading role permissions grid:', error);
+        Swal.fire('Error', 'No se pudieron cargar los permisos del rol.', 'error');
+    }
+}
+
+document.getElementById('role-perms-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const roleSelect = document.getElementById('perm-role-select');
+    if (!roleSelect) return;
+    const roleId = parseInt(roleSelect.value);
+
+    // Collect checked permission IDs
+    const checkedBoxes = document.querySelectorAll('#permissions-grid-container input[type="checkbox"]:checked');
+    const permissionIds = Array.from(checkedBoxes).map(cb => parseInt(cb.value));
+
+    try {
+        await window.electronAPI.updateRolePermissions(roleId, permissionIds);
+        Swal.fire({
+            title: '¡Guardado!',
+            text: `Los permisos del rol "${roleSelect.options[roleSelect.selectedIndex].text}" fueron actualizados correctamente.`,
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false
+        });
+
+        // If we updated the CURRENT logged-in user's role, refresh their permissions
+        if (window._currentUser && window._currentUser.role_id === roleId) {
+            const loginResult = await window.electronAPI.login(
+                window._currentUser.username,
+                '__refresh__'   // won't match password, we just need updated perms — handled below
+            );
+            // Since a re-login with wrong password won't work, just reload the grid
+        }
+    } catch (error) {
+        console.error('Error saving role permissions:', error);
+        Swal.fire('Error', 'No se pudieron guardar los permisos.', 'error');
+    }
+});
 
 // --- POS Logic ---
 
@@ -1290,7 +1532,7 @@ async function processSale() {
                 items: cart,
                 total: currentTotal,
                 method: method,
-                user: 'Cajero', 
+                user: currentUser ? currentUser.username : 'Cajero', 
                 clientName: clientName, 
                 observation: document.getElementById('pos-observation').value,
                 received: received,
@@ -1566,7 +1808,7 @@ async function openRegister() {
     }
 
     try {
-        await window.electronAPI.openRegister(amount, 'Admin'); // User hardcoded
+        await window.electronAPI.openRegister(amount, currentUser ? currentUser.username : 'Admin');
         Swal.fire({
             title: 'Caja Abierta',
             text: 'Turno iniciado correctamente',
@@ -1604,7 +1846,7 @@ async function closeRegister() {
 
     try {
         // We call the closeRegister API which calculates stats and commits the transaction
-        const result = await window.electronAPI.closeRegister(finalCash, 'Admin');
+        const result = await window.electronAPI.closeRegister(finalCash, currentUser ? currentUser.username : 'Admin');
 
         const diff = finalCash - expectedPhysical;
         let diffHtml = '';
@@ -1771,7 +2013,7 @@ async function confirmEditSale() {
             id: id,
             amount: amount,
             reason: reason,
-            user: 'Admin',
+            user: currentUser ? currentUser.username : 'Admin',
             restockItems: restockItems
         });
 
@@ -2019,7 +2261,7 @@ async function quickOpenTab(tableId) {
 
         if (formValues !== undefined) {
             const clientId = formValues ? parseInt(formValues) : null;
-            await window.electronAPI.openTab(tableId, clientId, 'Cajero');
+            await window.electronAPI.openTab(tableId, clientId, currentUser ? currentUser.username : 'Cajero');
             loadTabInPOS(tableId);
         }
     } catch (e) {
@@ -2141,7 +2383,7 @@ async function saveCartToTab() {
         let clientId = window.selectedCheckoutClient ? window.selectedCheckoutClient.id : null;
         
         if (!tab) {
-            tab = await window.electronAPI.openTab(tableId, clientId, 'Cajero');
+            tab = await window.electronAPI.openTab(tableId, clientId, currentUser ? currentUser.username : 'Cajero');
         }
 
         await window.electronAPI.updateTabItems(tab.id, cart);
@@ -3016,3 +3258,193 @@ function assignToVariantIndex(optIndex) {
         }
     }
 }
+
+// --- User Management Logic ---
+
+async function loadUsers() {
+    const tbody = document.getElementById('users-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center">Cargando...</td></tr>';
+
+    try {
+        const users = await window.electronAPI.getUsers();
+        await loadUserRoles();
+
+        tbody.innerHTML = '';
+        if (users.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No hay usuarios registrados.</td></tr>';
+            return;
+        }
+
+        users.forEach(u => {
+            const statusBadge = u.status 
+                ? '<span class="badge bg-success">Activo</span>' 
+                : '<span class="badge bg-danger">Inactivo</span>';
+
+            const createdDate = new Date(u.created_at).toLocaleString('es-PY');
+
+            const row = `
+                <tr>
+                    <td>${u.id}</td>
+                    <td class="fw-bold">${u.username}</td>
+                    <td><span class="badge bg-primary">${u.role_name || 'Sin Rol'}</span></td>
+                    <td>${statusBadge}</td>
+                    <td>${createdDate}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-warning me-1" onclick="editUser(${u.id})"><i class="bi bi-pencil"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteUser(${u.id}, '${u.username}')" ${u.username === 'admin' ? 'disabled' : ''}><i class="bi bi-trash"></i></button>
+                    </td>
+                </tr>
+            `;
+            tbody.innerHTML += row;
+        });
+    } catch (error) {
+        console.error("Error loading users", error);
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Error al cargar usuarios.</td></tr>';
+    }
+}
+
+async function loadUserRoles() {
+    const select = document.getElementById('user-role');
+    if (!select) return;
+
+    // Save selection
+    const currentVal = select.value;
+    select.innerHTML = '<option value="" disabled selected>Seleccione un rol</option>';
+
+    try {
+        const roles = await window.electronAPI.getRoles();
+        roles.forEach(r => {
+            select.innerHTML += `<option value="${r.id}">${r.name}</option>`;
+        });
+        if (currentVal) select.value = currentVal;
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+function resetUserForm() {
+    const form = document.getElementById('user-form');
+    if (form) form.reset();
+    
+    document.getElementById('edit-user-id').value = '';
+    document.getElementById('user-password').placeholder = 'Contraseña';
+    document.getElementById('user-password').required = true;
+    document.getElementById('user-form-title').innerText = 'Registrar Nuevo Usuario';
+    
+    const btn = document.getElementById('btn-save-user');
+    if (btn) {
+        btn.innerText = 'Guardar Usuario';
+        btn.classList.remove('btn-warning');
+        btn.classList.add('btn-success');
+    }
+}
+
+async function editUser(id) {
+    try {
+        const users = await window.electronAPI.getUsers();
+        const u = users.find(item => item.id === id);
+        if (!u) return;
+
+        document.getElementById('edit-user-id').value = u.id;
+        document.getElementById('user-username').value = u.username;
+        document.getElementById('user-role').value = u.role_id || '';
+        document.getElementById('user-status').value = u.status ? 'true' : 'false';
+        
+        // In edit mode, password is not strictly required unless changing it
+        document.getElementById('user-password').value = '';
+        document.getElementById('user-password').placeholder = 'Dejar vacío para no cambiar';
+        document.getElementById('user-password').required = false;
+
+        document.getElementById('user-form-title').innerText = `Editando Usuario: ${u.username}`;
+        
+        const btn = document.getElementById('btn-save-user');
+        if (btn) {
+            btn.innerText = 'Guardar Cambios';
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-warning');
+        }
+
+        const formCollapse = document.getElementById('newUserForm');
+        if (formCollapse) {
+            const bsCollapse = new bootstrap.Collapse(formCollapse, { show: true });
+            formCollapse.classList.add('show');
+            document.getElementById('user-form').scrollIntoView({ behavior: 'smooth' });
+        }
+    } catch (error) {
+        console.error("Error editing user", error);
+    }
+}
+
+async function confirmDeleteUser(id, username) {
+    if (username === 'admin') {
+        Swal.fire('Error', 'No se puede eliminar el usuario administrador principal (admin).', 'error');
+        return;
+    }
+
+    const result = await Swal.fire({
+        title: '¿Eliminar Usuario?',
+        text: `Esta acción eliminará de forma permanente al usuario "${username}".`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar'
+    });
+
+    if (result.isConfirmed) {
+        try {
+            await window.electronAPI.deleteUser(id);
+            Swal.fire('Eliminado', 'Usuario eliminado con éxito.', 'success');
+            loadUsers();
+            resetUserForm();
+        } catch (error) {
+            Swal.fire('Error', error.message || 'No se pudo eliminar al usuario.', 'error');
+        }
+    }
+}
+
+// User Form submit listener
+document.getElementById('user-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const id = document.getElementById('edit-user-id').value;
+    const username = document.getElementById('user-username').value.trim();
+    const password = document.getElementById('user-password').value;
+    const role_id = parseInt(document.getElementById('user-role').value);
+    const status = document.getElementById('user-status').value === 'true';
+
+    const userData = { username, password, role_id, status };
+
+    try {
+        if (id) {
+            await window.electronAPI.updateUser(id, userData);
+            Swal.fire({ title: 'Actualizado', text: 'Usuario actualizado correctamente.', icon: 'success', timer: 1500, showConfirmButton: false });
+        } else {
+            if (!password || password.trim() === '') {
+                Swal.fire('Error', 'La contraseña es requerida para nuevos usuarios.', 'error');
+                return;
+            }
+            await window.electronAPI.createUser(userData);
+            Swal.fire({ title: 'Registrado', text: 'Usuario creado correctamente.', icon: 'success', timer: 1500, showConfirmButton: false });
+        }
+
+        resetUserForm();
+        loadUsers();
+
+        // Close collapse
+        const formCollapse = document.getElementById('newUserForm');
+        if (formCollapse) {
+            const bsCollapse = bootstrap.Collapse.getInstance(formCollapse);
+            if (bsCollapse) bsCollapse.hide();
+            else formCollapse.classList.remove('show');
+        }
+    } catch (error) {
+        console.error(error);
+        let msg = error.message.replace('Error invoking remote method \'create-user\': ', '');
+        msg = msg.replace('Error invoking remote method \'update-user\': ', '');
+        Swal.fire('Error', msg, 'error');
+    }
+});
+

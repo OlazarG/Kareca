@@ -62,6 +62,12 @@
             border: none;
         }
 
+        /* Salarios / Planillas: la tabla se desplaza horizontalmente sin cortar texto */
+        #salarios-section .card-custom .card-body { overflow-x: auto; }
+        #salarios-section .table { min-width: 1180px; }
+        #salarios-section .table td, #salarios-section .table th { white-space: nowrap; }
+        #salarios-section .table .periodo-cell { white-space: nowrap; }
+
         /* POS Specific */
         .pos-total-display {
             font-size: 2.5rem;
@@ -224,6 +230,12 @@
             #users-section .table td, #users-section .table th { white-space: nowrap; }
             #users-section .nav-tabs .nav-link { font-size: 0.85rem; padding: 0.4rem 0.6rem; }
             #users-section .col-md-4 { width: 100%; }
+            /* Salarios */
+            #salarios-section .card-custom .card-body { overflow-x: auto; }
+            #salarios-section .table { font-size: 0.8rem; }
+            #salarios-section .table td, #salarios-section .table th { white-space: nowrap; }
+            #salarios-section .card-custom.p-3 .row { flex-direction: column; }
+            #salarios-section .card-custom.p-3 .col-md-4, #salarios-section .card-custom.p-3 .col-md-8 { width: 100%; }
         }
 
         /* Sidebar responsive */
@@ -331,6 +343,7 @@
                     class="bi bi-file-earmark-bar-graph me-2"></i>Reportes</a>
             <a href="#" onclick="showSection('caja')" id="nav-caja"><i class="bi bi-wallet2 me-2"></i>Control Caja</a>
             <a href="#" onclick="showSection('clients')" id="nav-clients"><i class="bi bi-people me-2"></i>Clientes</a>
+            <a href="#" onclick="showSection('salarios')" id="nav-salarios"><i class="bi bi-cash-coin me-2"></i>Salarios</a>
             <a href="#" onclick="showSection('users')" id="nav-users"><i class="bi bi-person-gear me-2"></i>Usuarios</a>
             
             <!-- User Info & Logout at bottom of Sidebar -->
@@ -1192,10 +1205,415 @@
                     </div>
                 </div>
             </div>
+
+        <!-- Salarios Section -->
+        <div id="salarios-section" style="display:none;">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2>Gestión de Salarios</h2>
+            </div>
+
+            <ul class="nav nav-tabs mb-4" id="salariosTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active fw-bold" id="emp-list-tab" data-bs-toggle="tab" data-bs-target="#emp-list-pane" type="button" role="tab" aria-selected="true"><i class="bi bi-people me-2"></i>Empleados</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link fw-bold" id="planillas-tab" data-bs-toggle="tab" data-bs-target="#planillas-pane" type="button" role="tab" aria-selected="false"><i class="bi bi-calendar2-check me-2"></i>Planillas</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link fw-bold" id="movs-tab" data-bs-toggle="tab" data-bs-target="#movs-pane" type="button" role="tab" aria-selected="false"><i class="bi bi-cash-stack me-2"></i>Planilla de Salarios</button>
+                </li>
+            </ul>
+
+            <div class="tab-content" id="salariosTabsContent">
+                <!-- Tab 1: Empleados -->
+                <div class="tab-pane fade show active" id="emp-list-pane" role="tabpanel" tabindex="0">
+                    <div class="d-flex justify-content-end mb-3">
+                        <button class="btn btn-success" type="button" data-bs-toggle="collapse"
+                            data-bs-target="#newEmployeeForm" id="btn-toggle-employee-form">
+                            + Nuevo Empleado
+                        </button>
+                    </div>
+
+                    <!-- Employee Form -->
+                    <div class="collapse mb-3" id="newEmployeeForm">
+                        <div class="card card-custom p-4 border-success">
+                            <h4 id="employee-form-title">Registrar Nuevo Empleado</h4>
+                            <form id="employee-form">
+                                <input type="hidden" id="edit-employee-id">
+                                <div class="row mb-3">
+                                    <div class="col-md-3">
+                                        <label class="form-label">Nombre</label>
+                                        <input type="text" class="form-control" id="emp-first-name" required placeholder="Ej: María">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">Apellido</label>
+                                        <input type="text" class="form-control" id="emp-last-name" required placeholder="Ej: González">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">Cédula / DNI</label>
+                                        <input type="text" class="form-control" id="emp-dni" placeholder="Ej: 1234567">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">Teléfono</label>
+                                        <input type="text" class="form-control" id="emp-phone" placeholder="Ej: 0981 123 456">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">Fecha de Ingreso</label>
+                                        <input type="date" class="form-control" id="emp-hire-date">
+                                    </div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Cargo</label>
+                                        <input type="text" class="form-control" id="emp-position" placeholder="Ej: Cajero">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Dirección</label>
+                                        <input type="text" class="form-control" id="emp-address" placeholder="Ej: Calle Principal 123">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">Estado</label>
+                                        <select class="form-select" id="emp-status">
+                                            <option value="true" selected>Activo</option>
+                                            <option value="false">Inactivo</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">Frecuencia de Pago</label>
+                                        <select class="form-select" id="emp-frequency" onchange="updateSalaryLabel()">
+                                            <option value="MENSUAL" selected>Mensual</option>
+                                            <option value="QUINCENAL">Quincenal</option>
+                                            <option value="SEMANAL">Semanal</option>
+                                        </select>
+                                        <small class="text-muted">El sistema prorratea el sueldo según la frecuencia.</small>
+                                    </div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-md-3">
+                                        <label class="form-label">Tipo de Sueldo</label>
+                                        <select class="form-select" id="emp-salary-type" onchange="updateSalaryLabel()">
+                                            <option value="FIJO" selected>Fijo</option>
+                                            <option value="POR_DIA">Por Día</option>
+                                            <option value="POR_HORA">Por Hora</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" id="emp-base-label">Sueldo Mensual</label>
+                                        <input type="text" class="form-control currency-input" id="emp-base-amount" placeholder="0">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label" id="emp-days-period-label">Días Laborables / Mes</label>
+                                        <input type="number" class="form-control" id="emp-days-period" value="26" min="1">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">Horas / Día</label>
+                                        <input type="number" class="form-control" id="emp-hours-day" value="8" min="1">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">Factor Hora Extra</label>
+                                        <input type="number" step="0.25" class="form-control" id="emp-overtime-rate" value="1.5" min="1">
+                                    </div>
+                                </div>
+                                <div class="row mb-3" id="emp-schedule-row">
+                                    <div class="col-md-8">
+                                        <label class="form-label">Horario de Trabajo <span class="text-muted">(días de la semana)</span></label>
+                                        <div class="d-flex flex-wrap gap-2" id="emp-schedule-boxes"></div>
+                                        <small class="text-muted">Marcá los días que trabaja. Los días sin marcar serán sus <strong>días libres</strong>. Los días esperados de cada planilla se calculan según este horario.</small>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="border rounded p-2 bg-light h-100">
+                                            <small class="text-muted d-block">Resumen del horario</small>
+                                            <strong id="emp-schedule-summary">-</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button type="submit" class="btn btn-success" id="btn-save-employee">Guardar Empleado</button>
+                                    <button type="button" class="btn btn-secondary" onclick="resetEmployeeForm()">Limpiar</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Employees List -->
+                    <div class="card card-custom">
+                        <div class="card-header bg-white py-3">
+                            <input type="text" id="employee-search-input" class="form-control" placeholder="Buscar empleado por Nombre o Cédula..." onkeyup="searchEmployeesList()">
+                        </div>
+                        <div class="card-body">
+                            <table class="table table-hover align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Nombre</th>
+                                        <th>Cédula</th>
+                                        <th>Cargo</th>
+                                        <th>Frecuencia</th>
+                                        <th>Tipo de Sueldo</th>
+                                        <th>Base</th>
+                                        <th>Días/Período</th>
+                                        <th>Estado</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="employees-table-body">
+                                    <!-- Loaded dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 2: Planillas (Fase 2) -->
+                <div class="tab-pane fade" id="planillas-pane" role="tabpanel" tabindex="0">
+                    <div class="card card-custom p-3 mb-3">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-4">
+                                <label class="form-label fw-bold mb-1">Empleado</label>
+                                <select class="form-select" id="period-employee-select" onchange="loadPeriods()">
+                                    <option value="">Todos los empleados</option>
+                                </select>
+                                <small class="text-muted">Elegí un empleado para generar solo su período.</small>
+                            </div>
+                            <div class="col-md-8 d-flex flex-wrap gap-2">
+                                <button class="btn btn-primary" onclick="generatePeriod()"><i class="bi bi-calendar-plus me-1"></i>Generar Período</button>
+                                <button class="btn btn-outline-primary" onclick="generatePeriodAll()"><i class="bi bi-calendar2-range me-1"></i>Generar para Todos</button>
+                                <button class="btn btn-outline-secondary ms-auto" onclick="loadPeriods()"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card card-custom">
+                        <div class="card-body table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Empleado</th>
+                                        <th>Período</th>
+                                        <th class="text-center">Días Esp.</th>
+                                        <th class="text-center">Trab.</th>
+                                        <th class="text-center">Faltas</th>
+                                        <th class="text-center">Hrs. Extra</th>
+                                        <th class="text-end">Bruto</th>
+                                        <th class="text-end">Bonos</th>
+                                        <th class="text-end">Adelantos</th>
+                                        <th class="text-end">Desc.</th>
+                                        <th class="text-end">Neto</th>
+                                        <th>Estado</th>
+                                        <th class="text-center">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="periods-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 3: Planilla de Salarios -->
+                <div class="tab-pane fade" id="movs-pane" role="tabpanel" tabindex="0">
+                    <div class="card card-custom mb-3">
+                        <div class="card-body">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-3">
+                                    <label class="form-label">Empleado</label>
+                                    <select class="form-select" id="salarytx-employee-select" onchange="loadSalaryTransactions()">
+                                        <option value="">Todos los empleados</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">Desde</label>
+                                    <input type="date" class="form-control" id="salarytx-date-from" onchange="loadSalaryTransactions()">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">Hasta</label>
+                                    <input type="date" class="form-control" id="salarytx-date-to" onchange="loadSalaryTransactions()">
+                                </div>
+                                <div class="col-md-5 d-flex flex-wrap gap-2">
+                                    <button class="btn btn-success" onclick="openSalaryTxModal('BONO')"><i class="bi bi-plus-circle me-1"></i>Registrar Bono</button>
+                                    <button class="btn btn-warning" onclick="openSalaryTxModal('ADELANTO')"><i class="bi bi-cash-coin me-1"></i>Registrar Adelanto</button>
+                                    <button class="btn btn-danger" onclick="openSalaryTxModal('DESCUENTO')"><i class="bi bi-dash-circle me-1"></i>Registrar Descuento</button>
+                                    <button class="btn btn-outline-secondary ms-auto" onclick="loadSalaryTransactions()"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar</button>
+                                </div>
+                            </div>
+                            <div class="row g-2 mt-2">
+                                <div class="col-md">
+                                    <div class="border rounded p-2 text-center bg-info-subtle">
+                                        <small class="text-muted d-block">Salarios abonados</small>
+                                        <strong class="text-info" id="salarytx-total-salarios">Gs. 0</strong>
+                                    </div>
+                                </div>
+                                <div class="col-md">
+                                    <div class="border rounded p-2 text-center bg-warning-subtle">
+                                        <small class="text-muted d-block">Adelantos del período</small>
+                                        <strong class="text-warning" id="salarytx-total-adelantos">Gs. 0</strong>
+                                    </div>
+                                </div>
+                                <div class="col-md">
+                                    <div class="border rounded p-2 text-center bg-success-subtle">
+                                        <small class="text-muted d-block">Bonos del período</small>
+                                        <strong class="text-success" id="salarytx-total-bonos">Gs. 0</strong>
+                                    </div>
+                                </div>
+                                <div class="col-md">
+                                    <div class="border rounded p-2 text-center bg-danger-subtle">
+                                        <small class="text-muted d-block">Descuentos del período</small>
+                                        <strong class="text-danger" id="salarytx-total-descuentos">Gs. 0</strong>
+                                    </div>
+                                </div>
+                                <div class="col-md">
+                                    <div class="border rounded p-2 text-center bg-primary-subtle">
+                                        <small class="text-muted d-block">Neto total</small>
+                                        <strong class="text-primary" id="salarytx-total-neto">Gs. 0</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card card-custom">
+                        <div class="card-body table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Empleado</th>
+                                        <th>Tipo</th>
+                                        <th>Descripción</th>
+                                        <th>Período</th>
+                                        <th>Método</th>
+                                        <th class="text-end">Monto</th>
+                                        <th>Fecha</th>
+                                        <th class="text-center">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="salarytx-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
         </div>
 
     </div>
     </div>
+    </div>
+
+    <!-- Edit Period Modal (Fase 2) -->
+    <div class="modal fade" id="editPeriodModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-pencil-square me-2"></i>Editar Planilla</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="edit-period-id">
+                    <div class="mb-3">
+                        <h6 class="fw-bold mb-0" id="edit-period-title"></h6>
+                        <small class="text-muted" id="edit-period-range"></small>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Días Correspondientes</label>
+                            <input type="number" class="form-control" id="period-expected-days" min="1" value="0" oninput="recalcPeriodPreview()">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Días Trabajados</label>
+                            <input type="number" class="form-control" id="period-worked-days" min="0" value="0" oninput="recalcPeriodPreview()">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Días Faltados</label>
+                            <input type="number" class="form-control" id="period-missed-days" min="0" readonly>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Horas Extra</label>
+                            <input type="number" class="form-control" id="period-overtime" step="0.5" min="0" value="0" oninput="recalcPeriodPreview()">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Bonos <span class="text-muted">(solo lectura)</span></label>
+                            <input type="text" class="form-control currency-input" id="period-bonus" value="0" readonly title="Se registran desde la pestaña Movimientos">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Adelantos <span class="text-muted">(solo lectura)</span></label>
+                            <input type="text" class="form-control currency-input" id="period-advance" value="0" readonly title="Se registran desde la pestaña Movimientos">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Descuentos <span class="text-muted">(solo lectura)</span></label>
+                            <input type="text" class="form-control currency-input" id="period-discount" value="0" readonly title="Se registran desde la pestaña Movimientos">
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label">Tipo de Salario / Base</label>
+                            <input type="text" class="form-control" id="period-employee-info" readonly>
+                        </div>
+                    </div>
+                    <hr>
+                    <div class="row text-center g-2">
+                        <div class="col-md-3">
+                            <small class="text-muted d-block">Salario Base</small>
+                            <h4 class="text-dark mb-0" id="period-preview-base">Gs. 0</h4>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted d-block">Horas Extra</small>
+                            <h4 class="text-info mb-0" id="period-preview-overtime">Gs. 0</h4>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted d-block">Total Bruto</small>
+                            <h4 class="text-primary mb-0" id="period-preview-gross">Gs. 0</h4>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted d-block">NETO</small>
+                            <h3 class="fw-bold text-success mb-0" id="period-preview-net">Gs. 0</h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" onclick="savePeriodEdit()">Guardar Planilla</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Salary Transaction Modal (Fase 3) -->
+    <div class="modal fade" id="salaryTxModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="salarytx-modal-title">Registrar</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="salarytx-type">
+                    <div class="mb-3">
+                        <label class="form-label">Empleado</label>
+                        <select class="form-select" id="salarytx-employee" onchange="loadSalaryTxPeriods()"></select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Período (opcional)</label>
+                        <select class="form-select" id="salarytx-period">
+                            <option value="">Sin período</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Monto (Gs.)</label>
+                        <input type="text" class="form-control currency-input" id="salarytx-amount" value="0">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Método de Pago</label>
+                        <select class="form-select" id="salarytx-method">
+                            <option value="Efectivo">Efectivo</option>
+                            <option value="Transferencia">Transferencia</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Descripción</label>
+                        <input type="text" class="form-control" id="salarytx-description" placeholder="Opcional">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" onclick="saveSalaryTx()">Guardar</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Split Modal -->

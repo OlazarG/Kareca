@@ -189,6 +189,7 @@ function applyRolePermissions() {
         'nav-reports': perms.includes('ver_reportes'),
         'nav-caja': perms.includes('gestionar_caja'),
         'nav-clients': perms.includes('gestionar_clientes'),
+        'nav-salarios': perms.includes('gestionar_salarios'),
         'nav-users': perms.includes('gestionar_usuarios')
     };
 
@@ -241,6 +242,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Focus on login username
     document.getElementById('login-username')?.focus();
+
+    renderScheduleBoxes();
+    updateSalaryLabel();
 });
 
 // --- Dashboard Logic ---
@@ -341,6 +345,7 @@ function showSection(sectionId) {
         if (sectionId === 'reports' && !perms.includes('ver_reportes')) return showSection('dashboard');
         if (sectionId === 'caja' && !perms.includes('gestionar_caja')) return showSection('dashboard');
         if (sectionId === 'clients' && !perms.includes('gestionar_clientes')) return showSection('dashboard');
+        if (sectionId === 'salarios' && !perms.includes('gestionar_salarios')) return showSection('dashboard');
         if (sectionId === 'users' && !perms.includes('gestionar_usuarios')) return showSection('dashboard');
     }
 
@@ -381,6 +386,11 @@ function showSection(sectionId) {
     }
     if (sectionId === 'clients') {
         loadClients();
+    }
+    if (sectionId === 'salarios') {
+        loadEmployees();
+        loadPlanillas();
+        loadSalarySection();
     }
     if (sectionId === 'users') {
         loadUsers();
@@ -3043,6 +3053,783 @@ async function confirmDeleteClient(id, name) {
             console.error(e);
             Swal.fire('Error', 'No se pudo eliminar el cliente.', 'error');
         }
+    }
+}
+
+// --- Salaries: Employees CRUD ---
+
+const FREQUENCY_LABELS = { 'MENSUAL': 'Mensual', 'QUINCENAL': 'Quincenal', 'SEMANAL': 'Semanal' };
+const SALARY_TYPE_LABELS = { 'FIJO': 'Fijo', 'POR_DIA': 'Por Día', 'POR_HORA': 'Por Hora' };
+
+// --- Horario Semanal (1=Lunes ... 7=Domingo) ---
+const WEEK_DAYS = [
+    { day: 1, label: 'Lun', full: 'Lunes' },
+    { day: 2, label: 'Mar', full: 'Martes' },
+    { day: 3, label: 'Mié', full: 'Miércoles' },
+    { day: 4, label: 'Jue', full: 'Jueves' },
+    { day: 5, label: 'Vie', full: 'Viernes' },
+    { day: 6, label: 'Sáb', full: 'Sábado' },
+    { day: 7, label: 'Dom', full: 'Domingo' }
+];
+
+let currentEmpWorkDays = [1, 2, 3, 4, 5, 6];
+
+function countWorkDays(workDays, startDate, endDate) {
+    const set = new Set(Array.isArray(workDays) && workDays.length ? workDays.map(Number) : [1, 2, 3, 4, 5, 6]);
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const cur = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+    let count = 0;
+    while (cur <= last) {
+        const dow = cur.getDay() === 0 ? 7 : cur.getDay(); // 1=Lunes ... 7=Domingo
+        if (set.has(dow)) count++;
+        cur.setDate(cur.getDate() + 1);
+    }
+    return Math.max(1, count);
+}
+
+function renderScheduleBoxes() {
+    const container = document.getElementById('emp-schedule-boxes');
+    if (!container) return;
+    container.innerHTML = '';
+    WEEK_DAYS.forEach(wd => {
+        const active = currentEmpWorkDays.includes(wd.day);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-sm day-chip' + (active ? ' btn-success' : ' btn-outline-secondary');
+        btn.dataset.day = wd.day;
+        btn.innerHTML = active ? `<i class="bi bi-check-lg me-1"></i>${wd.label}` : wd.label;
+        btn.onclick = () => toggleScheduleDay(wd.day);
+        container.appendChild(btn);
+    });
+    updateScheduleSummary();
+}
+
+function toggleScheduleDay(day) {
+    if (currentEmpWorkDays.includes(day)) {
+        if (currentEmpWorkDays.length <= 1) {
+            Swal.fire('Atención', 'El empleado debe tener al menos 1 día de trabajo por semana.', 'warning');
+            return;
+        }
+        currentEmpWorkDays = currentEmpWorkDays.filter(d => d !== day);
+    } else {
+        currentEmpWorkDays.push(day);
+        currentEmpWorkDays.sort((a, b) => a - b);
+    }
+    renderScheduleBoxes();
+}
+
+function updateScheduleSummary() {
+    const el = document.getElementById('emp-schedule-summary');
+    if (!el) return;
+    const free = WEEK_DAYS.filter(wd => !currentEmpWorkDays.includes(wd.day));
+    const freeText = free.length ? free.map(f => f.full).join(', ') : 'Ninguno';
+    el.innerHTML = `Días de trabajo: <b>${currentEmpWorkDays.length}</b> · Libre: <b>${freeText}</b>`;
+}
+
+async function loadEmployees() {
+    const tbody = document.getElementById('employees-table-body');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="10" class="text-center">Cargando empleados...</td></tr>';
+
+    try {
+        const term = document.getElementById('employee-search-input').value.trim();
+        const employees = await window.electronAPI.getEmployees(term);
+
+        tbody.innerHTML = '';
+        if (employees.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">No se encontraron empleados.</td></tr>';
+            return;
+        }
+
+        employees.forEach(e => {
+            const fullName = `${e.first_name} ${e.last_name}`;
+            const row = `
+                <tr>
+                    <td>${e.id}</td>
+                    <td class="fw-bold">${fullName}</td>
+                    <td>${e.dni || '-'}</td>
+                    <td>${e.position || '-'}</td>
+                    <td>${FREQUENCY_LABELS[e.pay_frequency] || e.pay_frequency}</td>
+                    <td>${SALARY_TYPE_LABELS[e.salary_type] || e.salary_type}</td>
+                    <td class="text-end">${formatCurrency(e.base_amount || 0)}</td>
+                    <td class="text-center">${(Array.isArray(e.work_days) ? e.work_days.filter(Boolean).length : 6)} d/sem</td>
+                    <td>${e.status ? '<span class="badge bg-success">Activo</span>' : '<span class="badge bg-secondary">Inactivo</span>'}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-warning me-1" onclick="editEmployee(${e.id})"><i class="bi bi-pencil"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteEmployee(${e.id}, '${fullName.replace(/'/g, "\\'")}')"><i class="bi bi-trash"></i></button>
+                    </td>
+                </tr>
+            `;
+            tbody.innerHTML += row;
+        });
+    } catch (e) {
+        console.error(e);
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger">Error al cargar empleados.</td></tr>';
+    }
+}
+
+function searchEmployeesList() {
+    loadEmployees();
+}
+
+function resetEmployeeForm() {
+    document.getElementById('employee-form').reset();
+    document.getElementById('edit-employee-id').value = '';
+    document.getElementById('employee-form-title').innerText = 'Registrar Nuevo Empleado';
+    document.getElementById('btn-save-employee').innerText = 'Guardar Empleado';
+    document.getElementById('emp-frequency').value = 'MENSUAL';
+    document.getElementById('emp-salary-type').value = 'FIJO';
+    document.getElementById('emp-status').value = 'true';
+    document.getElementById('emp-days-period').value = 26;
+    document.getElementById('emp-hours-day').value = 8;
+    document.getElementById('emp-overtime-rate').value = 1.5;
+    currentEmpWorkDays = [1, 2, 3, 4, 5, 6];
+    renderScheduleBoxes();
+    updateSalaryLabel();
+}
+
+function updateSalaryLabel() {
+    const type = document.getElementById('emp-salary-type')?.value;
+    const freq = document.getElementById('emp-frequency')?.value;
+    const label = document.getElementById('emp-base-label');
+    if (label) {
+        if (type === 'POR_DIA') label.innerText = 'Sueldo por Día';
+        else if (type === 'POR_HORA') label.innerText = 'Sueldo por Hora';
+        else if (freq === 'SEMANAL') label.innerText = 'Sueldo Semanal';
+        else if (freq === 'QUINCENAL') label.innerText = 'Sueldo Quincenal';
+        else label.innerText = 'Sueldo Mensual';
+    }
+    const scheduleRow = document.getElementById('emp-schedule-row');
+    if (scheduleRow) scheduleRow.style.display = '';
+    const daysInput = document.getElementById('emp-days-period');
+    if (daysInput) {
+        const col = daysInput.closest('.col-md-2');
+        if (col) col.style.display = 'none';
+    }
+    renderScheduleBoxes();
+}
+
+function collectEmployeeForm() {
+    return {
+        first_name: document.getElementById('emp-first-name').value.trim(),
+        last_name: document.getElementById('emp-last-name').value.trim(),
+        dni: document.getElementById('emp-dni').value.trim(),
+        phone: document.getElementById('emp-phone').value.trim(),
+        address: document.getElementById('emp-address').value.trim(),
+        position: document.getElementById('emp-position').value.trim(),
+        hire_date: document.getElementById('emp-hire-date').value || null,
+        status: document.getElementById('emp-status').value === 'true',
+        pay_frequency: document.getElementById('emp-frequency').value,
+        salary_type: document.getElementById('emp-salary-type').value,
+        base_amount: parseCurrency(document.getElementById('emp-base-amount').value),
+        days_per_period: parseInt(document.getElementById('emp-days-period').value) || 26,
+        hours_per_day: parseInt(document.getElementById('emp-hours-day').value) || 8,
+        overtime_rate: parseFloat(document.getElementById('emp-overtime-rate').value) || 1.5,
+        work_days: [...currentEmpWorkDays]
+    };
+}
+
+document.getElementById('employee-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('edit-employee-id').value;
+    const employeeData = collectEmployeeForm();
+
+    if (!employeeData.first_name || !employeeData.last_name) {
+        Swal.fire('Atención', 'Debe ingresar nombre y apellido.', 'warning');
+        return;
+    }
+
+    try {
+        if (id) {
+            await window.electronAPI.updateEmployee(id, employeeData);
+            Swal.fire({ title: 'Actualizado', text: 'Datos actualizados correctamente.', icon: 'success', timer: 1500, showConfirmButton: false });
+        } else {
+            await window.electronAPI.createEmployee(employeeData);
+            Swal.fire({ title: 'Registrado', text: 'Empleado registrado correctamente.', icon: 'success', timer: 1500, showConfirmButton: false });
+        }
+        resetEmployeeForm();
+        loadEmployees();
+        const bsCollapse = bootstrap.Collapse.getInstance(document.getElementById('newEmployeeForm'));
+        bsCollapse?.hide();
+    } catch (error) {
+        console.error(error);
+        Swal.fire('Error', error.message || 'No se pudo guardar el empleado.', 'error');
+    }
+});
+
+async function editEmployee(id) {
+    try {
+        const employees = await window.electronAPI.getEmployees('');
+        const e = employees.find(item => item.id === id);
+        if (!e) return;
+
+        document.getElementById('edit-employee-id').value = e.id;
+        document.getElementById('emp-first-name').value = e.first_name;
+        document.getElementById('emp-last-name').value = e.last_name;
+        document.getElementById('emp-dni').value = e.dni || '';
+        document.getElementById('emp-phone').value = e.phone || '';
+        document.getElementById('emp-address').value = e.address || '';
+        document.getElementById('emp-position').value = e.position || '';
+        document.getElementById('emp-hire-date').value = e.hire_date ? String(e.hire_date).slice(0, 10) : '';
+        document.getElementById('emp-status').value = e.status ? 'true' : 'false';
+        document.getElementById('emp-frequency').value = e.pay_frequency || 'MENSUAL';
+        document.getElementById('emp-salary-type').value = e.salary_type || 'FIJO';
+        document.getElementById('emp-base-amount').value = formatCurrency(e.base_amount || 0);
+        document.getElementById('emp-days-period').value = e.days_per_period || 26;
+        document.getElementById('emp-hours-day').value = e.hours_per_day || 8;
+        document.getElementById('emp-overtime-rate').value = e.overtime_rate || 1.5;
+        currentEmpWorkDays = Array.isArray(e.work_days) && e.work_days.filter(Boolean).length
+            ? e.work_days.map(Number).sort((a, b) => a - b)
+            : [1, 2, 3, 4, 5, 6];
+        renderScheduleBoxes();
+        updateSalaryLabel();
+
+        document.getElementById('employee-form-title').innerText = `Editando Empleado: ${e.first_name} ${e.last_name}`;
+        document.getElementById('btn-save-employee').innerText = 'Guardar Cambios';
+
+        const bsCollapse = new bootstrap.Collapse(document.getElementById('newEmployeeForm'), { show: true });
+        document.getElementById('newEmployeeForm').classList.add('show');
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function confirmDeleteEmployee(id, name) {
+    const confirm = await Swal.fire({
+        title: `¿Eliminar Empleado "${name}"?`,
+        text: "Se eliminarán sus datos y no podrá generar planillas.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar'
+    });
+
+    if (confirm.isConfirmed) {
+        try {
+            await window.electronAPI.deleteEmployee(id);
+            Swal.fire('Eliminado', 'El empleado ha sido eliminado.', 'success');
+            loadEmployees();
+        } catch (e) {
+            console.error(e);
+            Swal.fire('Error', 'No se pudo eliminar el empleado.', 'error');
+        }
+    }
+}
+
+// ===================== Planillas (Períodos) =====================
+
+function fmtDate(d) {
+    if (!d) return '-';
+    const date = new Date(d);
+    if (isNaN(date.getTime())) return String(d);
+    return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+}
+
+function computePeriodPreview(emp, referenceDays, expectedDays, workedDays, overtimeHours, bonus, advance, discount) {
+    const base = parseFloat(emp.base_amount) || 0;
+    const hpd = parseFloat(emp.hours_per_day) || 8;
+    const rate = parseFloat(emp.overtime_rate) || 1.5;
+    const ref = Math.max(parseInt(referenceDays) || 1, 1);
+    const ed = Math.max(parseInt(expectedDays) || 1, 1);
+    const wd = Math.max(parseInt(workedDays) || 0, 0);
+    const oh = parseFloat(overtimeHours) || 0;
+
+    let hourlyValue, gross;
+    if (emp.salary_type === 'POR_HORA') {
+        hourlyValue = base;
+        gross = hourlyValue * wd * hpd;
+    } else if (emp.salary_type === 'POR_DIA') {
+        hourlyValue = base / Math.max(hpd, 1);
+        gross = base * wd;
+    } else { // FIJO: base = sueldo por período (mensual/quincenal/semanal); se prorratea por días trabajados (ref = días de trabajo del período)
+        const daily = base / ref;
+        hourlyValue = daily / Math.max(hpd, 1);
+        gross = daily * wd;
+    }
+    const overtime = hourlyValue * rate * oh;
+    const totalGross = gross + overtime;
+    const net = Math.max(0, totalGross + (parseFloat(bonus) || 0) - (parseFloat(advance) || 0) - (parseFloat(discount) || 0));
+    return { base: gross, overtime, gross: totalGross, net };
+}
+
+async function loadPlanillas() {
+    try {
+        const employees = await window.electronAPI.getEmployees('');
+        const select = document.getElementById('period-employee-select');
+        if (!select) return;
+        const current = select.value;
+        let options = '<option value="">Todos los empleados</option>';
+        employees.filter(e => e.status).forEach(e => {
+            options += `<option value="${e.id}">${e.first_name} ${e.last_name}</option>`;
+        });
+        select.innerHTML = options;
+        select.value = current || '';
+    } catch (e) {
+        console.error(e);
+    }
+    loadPeriods();
+}
+
+async function loadPeriods() {
+    const tbody = document.getElementById('periods-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="13" class="text-center">Cargando planillas...</td></tr>';
+
+    try {
+        const employeeId = document.getElementById('period-employee-select')?.value || '';
+        const periods = await window.electronAPI.getPayrollPeriods(employeeId, '');
+
+        tbody.innerHTML = '';
+        if (periods.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="13" class="text-center text-muted">No hay planillas. Genere un período para comenzar.</td></tr>';
+            return;
+        }
+
+        periods.forEach(p => {
+            const name = `${p.first_name} ${p.last_name}`;
+            const freqBadge = `<span class="badge bg-light text-dark border ms-1">${FREQUENCY_LABELS[p.pay_frequency] || p.pay_frequency}</span>`;
+            const statusBadge = p.status === 'PAGADO'
+                ? '<span class="badge bg-success">Pagado</span>'
+                : '<span class="badge bg-warning text-dark">Pendiente</span>';
+            const row = `
+                <tr>
+                    <td class="fw-bold">${name}</td>
+                    <td class="periodo-cell">${fmtDate(p.period_start)} - ${fmtDate(p.period_end)}${freqBadge}</td>
+                    <td class="text-center">${p.expected_days}</td>
+                    <td class="text-center">${p.worked_days}</td>
+                    <td class="text-center">${p.missed_days}</td>
+                    <td class="text-center">${Number(p.overtime_hours) || 0}</td>
+                    <td class="text-end">${formatCurrency(p.gross_salary || 0)}</td>
+                    <td class="text-end">${formatCurrency(p.bonus_amount || 0)}</td>
+                    <td class="text-end">${formatCurrency(p.advance_amount || 0)}</td>
+                    <td class="text-end">${formatCurrency(p.discount_amount || 0)}</td>
+                    <td class="text-end fw-bold">${formatCurrency(p.net_salary || 0)}</td>
+                    <td>${statusBadge}</td>
+                    <td class="text-center">
+                        <button class="btn btn-sm btn-outline-warning" onclick="openPeriodEdit(${p.id})" title="Editar planilla"><i class="bi bi-pencil"></i></button>
+                        ${p.status !== 'PAGADO' ? `<button class="btn btn-sm btn-success ms-1" onclick="confirmPayPeriod(${p.id}, '${name.replace(/'/g, "\\'")}', ${p.net_salary || 0})" title="Marcar como pagada"><i class="bi bi-check2-circle"></i></button>` : ''}
+                        <button class="btn btn-sm btn-outline-danger ms-1" onclick="confirmDeletePeriod(${p.id}, '${name.replace(/'/g, "\\'")}', '${fmtDate(p.period_start)} - ${fmtDate(p.period_end)}')" title="Eliminar período"><i class="bi bi-trash"></i></button>
+                    </td>
+                </tr>
+            `;
+            tbody.innerHTML += row;
+        });
+    } catch (e) {
+        console.error(e);
+        tbody.innerHTML = '<tr><td colspan="13" class="text-center text-danger">Error al cargar planillas.</td></tr>';
+    }
+}
+
+async function generatePeriod() {
+    const employeeId = document.getElementById('period-employee-select')?.value || '';
+    if (!employeeId) {
+        Swal.fire('Seleccione un empleado', 'Elegí un empleado del listado para generar su próximo período, o usá el botón "Generar para Todos".', 'warning');
+        return;
+    }
+    const confirm = await Swal.fire({
+        title: 'Generar Período',
+        text: 'Se generará el próximo período de planilla para el empleado seleccionado.',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#3085d6',
+        confirmButtonText: 'Generar',
+        cancelButtonText: 'Cancelar'
+    });
+    if (!confirm.isConfirmed) return;
+
+    try {
+        const periods = await window.electronAPI.generatePeriods(employeeId);
+        const items = periods.map(p => `<li class="text-start">${p.first_name} ${p.last_name}: ${fmtDate(p.period_start)} - ${fmtDate(p.period_end)}</li>`).join('');
+        Swal.fire({
+            title: 'Período(s) generado(s)',
+            html: `<ul class="mb-0 ps-3">${items}</ul>`,
+            icon: 'success',
+            timer: 2500,
+            showConfirmButton: false
+        });
+        loadPlanillas();
+    } catch (e) {
+        console.error(e);
+        Swal.fire('Error', e.message || 'No se pudo generar el período.', 'error');
+    }
+}
+
+async function generatePeriodAll() {
+    const confirm = await Swal.fire({
+        title: 'Generar para Todos',
+        text: 'Se generará el próximo período de planilla para TODOS los empleados activos según su frecuencia de pago.',
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#3085d6',
+        confirmButtonText: 'Generar',
+        cancelButtonText: 'Cancelar'
+    });
+    if (!confirm.isConfirmed) return;
+
+    try {
+        const periods = await window.electronAPI.generatePeriods('');
+        const items = periods.map(p => `<li class="text-start">${p.first_name} ${p.last_name}: ${fmtDate(p.period_start)} - ${fmtDate(p.period_end)}</li>`).join('');
+        Swal.fire({
+            title: 'Período(s) generado(s)',
+            html: items ? `<ul class="mb-0 ps-3">${items}</ul>` : 'No se generaron períodos nuevos.',
+            icon: 'success',
+            timer: 2500,
+            showConfirmButton: false
+        });
+        loadPlanillas();
+    } catch (e) {
+        console.error(e);
+        Swal.fire('Error', e.message || 'No se pudo generar el período.', 'error');
+    }
+}
+
+let currentPeriodEmp = null;
+
+async function openPeriodEdit(id) {
+    try {
+        const period = await window.electronAPI.getPayrollPeriod(id);
+        currentPeriodEmp = period;
+
+        document.getElementById('edit-period-id').value = period.id;
+        document.getElementById('edit-period-title').innerText = `${period.first_name} ${period.last_name}`;
+        document.getElementById('edit-period-range').innerText = `${fmtDate(period.period_start)} al ${fmtDate(period.period_end)} · ${FREQUENCY_LABELS[period.pay_frequency] || period.pay_frequency}`;
+        document.getElementById('period-employee-info').value =
+            `${SALARY_TYPE_LABELS[period.salary_type] || period.salary_type} · Base ${formatCurrency(period.base_amount || 0)} · ${period.hours_per_day} hs/día · Extra x${period.overtime_rate}`;
+
+        document.getElementById('period-expected-days').value = period.expected_days;
+        document.getElementById('period-worked-days').value = period.worked_days;
+        document.getElementById('period-missed-days').value = period.missed_days;
+        document.getElementById('period-overtime').value = Number(period.overtime_hours) || 0;
+        document.getElementById('period-bonus').value = Number(period.bonus_amount || 0).toLocaleString('es-PY');
+        document.getElementById('period-advance').value = Number(period.advance_amount || 0).toLocaleString('es-PY');
+        document.getElementById('period-discount').value = Number(period.discount_amount || 0).toLocaleString('es-PY');
+
+        recalcPeriodPreview();
+        new bootstrap.Modal(document.getElementById('editPeriodModal')).show();
+    } catch (e) {
+        console.error(e);
+        Swal.fire('Error', e.message || 'No se pudo cargar la planilla.', 'error');
+    }
+}
+
+function recalcPeriodPreview() {
+    const emp = currentPeriodEmp;
+    const expected = document.getElementById('period-expected-days').value;
+    const worked = document.getElementById('period-worked-days').value;
+    const missed = Math.max(0, (parseInt(expected) || 0) - (parseInt(worked) || 0));
+    document.getElementById('period-missed-days').value = missed;
+
+    if (!emp) return;
+    const bonus = parseCurrency(document.getElementById('period-bonus').value);
+    const advance = parseCurrency(document.getElementById('period-advance').value);
+    const discount = parseCurrency(document.getElementById('period-discount').value);
+    const calc = computePeriodPreview(emp, countWorkDays(emp.work_days, emp.period_start, emp.period_end), expected, worked, document.getElementById('period-overtime').value, bonus, advance, discount);
+
+    document.getElementById('period-preview-base').innerText = formatCurrency(calc.base);
+    document.getElementById('period-preview-overtime').innerText = formatCurrency(calc.overtime);
+    document.getElementById('period-preview-gross').innerText = formatCurrency(calc.gross);
+    document.getElementById('period-preview-net').innerText = formatCurrency(calc.net);
+}
+
+async function savePeriodEdit() {
+    const id = document.getElementById('edit-period-id').value;
+    const data = {
+        expected_days: parseInt(document.getElementById('period-expected-days').value) || 0,
+        worked_days: parseInt(document.getElementById('period-worked-days').value) || 0,
+        overtime_hours: parseFloat(document.getElementById('period-overtime').value) || 0
+    };
+
+    try {
+        await window.electronAPI.updatePayrollPeriod(id, data);
+        bootstrap.Modal.getInstance(document.getElementById('editPeriodModal'))?.hide();
+        Swal.fire({ title: 'Guardado', text: 'Planilla actualizada correctamente.', icon: 'success', timer: 1500, showConfirmButton: false });
+        loadPeriods();
+    } catch (e) {
+        console.error(e);
+        Swal.fire('Error', e.message || 'No se pudo guardar la planilla.', 'error');
+    }
+}
+
+async function confirmPayPeriod(id, name, netAmount) {
+    const methodOptions = ['Efectivo', 'Transferencia', 'Cheque'].map(m =>
+        `<option value="${m}" ${m === 'Efectivo' ? 'selected' : ''}>${m}</option>`
+    ).join('');
+    const confirm = await Swal.fire({
+        title: `¿Pagar planilla de ${name}?`,
+        html: `El neto a pagar es <b>${formatCurrency(netAmount || 0)}</b>. Al confirmar, la planilla quedará marcada como PAGADA.<br><br>
+               <label class="form-label text-start d-block mb-1">Método de pago</label>
+               <select id="swal-pay-method" class="form-select">${methodOptions}</select>`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#28a745',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, marcar como pagada',
+        cancelButtonText: 'Cancelar',
+        preConfirm: () => {
+            const sel = document.getElementById('swal-pay-method');
+            return sel ? sel.value : 'Efectivo';
+        }
+    });
+    if (!confirm.isConfirmed) return;
+    const method = confirm.value || 'Efectivo';
+
+    try {
+        const period = await window.electronAPI.payPayrollPeriod(id, method);
+        Swal.fire({
+            title: 'Planilla pagada',
+            text: `Neto pagado: ${formatCurrency(period.net_salary || 0)} (${method}).`,
+            icon: 'success',
+            timer: 1800,
+            showConfirmButton: false
+        });
+        loadPeriods();
+        loadSalaryTransactions();
+    } catch (e) {
+        console.error(e);
+        Swal.fire('Error', e.message || 'No se pudo marcar la planilla como pagada.', 'error');
+    }
+}
+
+async function confirmDeletePeriod(id, name, range) {
+    const confirm = await Swal.fire({
+        title: `¿Eliminar planilla de ${name}?`,
+        html: `Se eliminará el período <strong>${range}</strong>.<br>Los adelantos, bonos y descuentos vinculados <strong>se conservan</strong> (quedan sin período asignado).`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar'
+    });
+    if (!confirm.isConfirmed) return;
+
+    try {
+        await window.electronAPI.deletePayrollPeriod(id);
+        Swal.fire({ title: 'Eliminado', text: 'La planilla fue eliminada.', icon: 'success', timer: 1500, showConfirmButton: false });
+        loadPeriods();
+    } catch (e) {
+        console.error(e);
+        Swal.fire('Error', e.message || 'No se pudo eliminar la planilla.', 'error');
+    }
+}
+
+// --- Salary Transactions (Adelantos, Bonos, Descuentos) ---
+
+const TX_TYPE_BADGES = {
+    'SALARIO': '<span class="badge bg-info text-dark">Salario abonado</span>',
+    'ADELANTO': '<span class="badge bg-warning text-dark">Adelanto</span>',
+    'BONO': '<span class="badge bg-success">Bono</span>',
+    'DESCUENTO': '<span class="badge bg-danger">Descuento</span>'
+};
+
+async function loadSalarySection() {
+    const filterSelect = document.getElementById('salarytx-employee-select');
+    if (filterSelect) {
+        try {
+            const employees = await window.electronAPI.getEmployees('');
+            const current = filterSelect.value;
+            let options = '<option value="">Todos los empleados</option>';
+            employees.forEach(e => {
+                options += `<option value="${e.id}">${e.first_name} ${e.last_name}</option>`;
+            });
+            filterSelect.innerHTML = options;
+            filterSelect.value = current || '';
+        } catch (e) {
+            console.error(e);
+        }
+    }
+    await loadSalaryTransactions();
+}
+
+async function loadSalaryTransactions() {
+    const tbody = document.getElementById('salarytx-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center">Cargando movimientos...</td></tr>';
+
+    const fromInput = document.getElementById('salarytx-date-from');
+    const toInput = document.getElementById('salarytx-date-to');
+    if (fromInput && !fromInput.value) fromInput.value = getLocalDateStr();
+    if (toInput && !toInput.value) toInput.value = getLocalDateStr();
+
+    try {
+        const employeeId = document.getElementById('salarytx-employee-select')?.value || '';
+        const { items, totals } = await window.electronAPI.getSalaryLedger(
+            employeeId, fromInput?.value || '', toInput?.value || ''
+        );
+
+        const sumSalarios = Number(totals?.salarios) || 0;
+        const sumAdelantos = Number(totals?.adelantos) || 0;
+        const sumBonos = Number(totals?.bonos) || 0;
+        const sumDescuentos = Number(totals?.descuentos) || 0;
+        const sumNeto = Number(totals?.neto) || 0;
+        const elSa = document.getElementById('salarytx-total-salarios');
+        const elAd = document.getElementById('salarytx-total-adelantos');
+        const elBo = document.getElementById('salarytx-total-bonos');
+        const elDe = document.getElementById('salarytx-total-descuentos');
+        const elNe = document.getElementById('salarytx-total-neto');
+        if (elSa) elSa.innerText = formatCurrency(sumSalarios);
+        if (elAd) elAd.innerText = formatCurrency(sumAdelantos);
+        if (elBo) elBo.innerText = formatCurrency(sumBonos);
+        if (elDe) elDe.innerText = formatCurrency(sumDescuentos);
+        if (elNe) elNe.innerText = formatCurrency(sumNeto);
+
+        tbody.innerHTML = '';
+        if (items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No hay movimientos en el período seleccionado.</td></tr>';
+            return;
+        }
+
+        items.forEach(t => {
+            const isSalary = t.concepto === 'SALARIO';
+            const periodText = t.period_start
+                ? `${fmtDate(t.period_start)} - ${fmtDate(t.period_end)}`
+                : '<span class="text-muted">Sin período</span>';
+            const montoClass = isSalary
+                ? 'text-primary'
+                : (t.concepto === 'BONO' ? 'text-success' : 'text-danger');
+            const acciones = isSalary
+                ? '<span class="text-muted">-</span>'
+                : `<button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteSalaryTx(${t.id}, ${t.monto}, '${t.concepto}')" title="Eliminar movimiento"><i class="bi bi-trash"></i></button>`;
+            const row = `
+                <tr>
+                    <td class="fw-bold">${t.empleado}</td>
+                    <td>${TX_TYPE_BADGES[t.concepto] || t.concepto}</td>
+                    <td>${t.descripcion || '-'}</td>
+                    <td>${periodText}</td>
+                    <td>${t.metodo || '-'}</td>
+                    <td class="text-end fw-bold ${montoClass}">${formatCurrency(t.monto)}</td>
+                    <td>${fmtDate(t.fecha)}</td>
+                    <td class="text-center">${acciones}</td>
+                </tr>
+            `;
+            tbody.innerHTML += row;
+        });
+    } catch (e) {
+        console.error(e);
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">Error al cargar movimientos.</td></tr>';
+    }
+}
+
+async function loadSalaryTxPeriods() {
+    const empId = document.getElementById('salarytx-employee').value;
+    const select = document.getElementById('salarytx-period');
+    const current = select.value;
+    select.innerHTML = '<option value="">Sin período</option>';
+    if (!empId) return;
+    try {
+        const periods = await window.electronAPI.getPayrollPeriods(empId, 'PENDIENTE');
+        periods.forEach(p => {
+            select.innerHTML += `<option value="${p.id}">${fmtDate(p.period_start)} - ${fmtDate(p.period_end)} (Neto ${formatCurrency(p.net_salary)})</option>`;
+        });
+        if (current && periods.some(p => String(p.id) === String(current))) {
+            select.value = current;
+        } else if (document.getElementById('salarytx-type').value === 'DESCUENTO' && periods.length) {
+            select.value = periods[0].id;
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+async function openSalaryTxModal(type) {
+    const labels = {
+        'ADELANTO': { title: 'Registrar Adelanto' },
+        'BONO': { title: 'Registrar Bono' },
+        'DESCUENTO': { title: 'Registrar Descuento' }
+    };
+    const meta = labels[type] || labels.ADELANTO;
+
+    document.getElementById('salarytx-type').value = type;
+    document.getElementById('salarytx-modal-title').innerText = meta.title;
+    document.getElementById('salarytx-amount').value = '0';
+    document.getElementById('salarytx-description').value = '';
+    document.getElementById('salarytx-method').value = 'Efectivo';
+
+    const empSelect = document.getElementById('salarytx-employee');
+    const prevEmp = empSelect.value;
+    empSelect.innerHTML = '<option value="">Seleccionar...</option>';
+    try {
+        const employees = await window.electronAPI.getEmployees('');
+        employees.filter(e => e.status).forEach(e => {
+            empSelect.innerHTML += `<option value="${e.id}">${e.first_name} ${e.last_name}</option>`;
+        });
+        if (prevEmp) empSelect.value = prevEmp;
+    } catch (e) {
+        console.error(e);
+    }
+
+    document.getElementById('salarytx-period').innerHTML = '<option value="">Sin período</option>';
+    loadSalaryTxPeriods();
+    new bootstrap.Modal(document.getElementById('salaryTxModal')).show();
+    setTimeout(() => empSelect.focus(), 300);
+}
+
+async function saveSalaryTx() {
+    const type = document.getElementById('salarytx-type').value;
+    const employeeId = document.getElementById('salarytx-employee').value;
+    const periodId = document.getElementById('salarytx-period').value;
+    const amount = parseCurrency(document.getElementById('salarytx-amount').value);
+    const method = document.getElementById('salarytx-method').value;
+    const description = document.getElementById('salarytx-description').value.trim();
+
+    if (!employeeId) {
+        Swal.fire('Seleccione un empleado', 'Debe elegir el empleado al que corresponde el movimiento.', 'warning');
+        return;
+    }
+    if (!amount || amount <= 0) {
+        Swal.fire('Monto inválido', 'Ingrese un monto mayor a cero.', 'warning');
+        return;
+    }
+
+    try {
+        await window.electronAPI.createSalaryTransaction({
+            employee_id: Number(employeeId),
+            period_id: periodId ? Number(periodId) : null,
+            transaction_type: type,
+            amount,
+            description,
+            payment_method: method,
+            user_name: currentUser ? currentUser.username : 'Admin'
+        });
+        bootstrap.Modal.getInstance(document.getElementById('salaryTxModal'))?.hide();
+        Swal.fire({ title: 'Registrado', text: 'Movimiento registrado y aplicado a la planilla.', icon: 'success', timer: 1800, showConfirmButton: false });
+        loadSalaryTransactions();
+        loadPlanillas();
+    } catch (e) {
+        console.error(e);
+        Swal.fire('Error', e.message || 'No se pudo registrar el movimiento.', 'error');
+    }
+}
+
+async function confirmDeleteSalaryTx(id, amount, type) {
+    const affectsCash = type === 'ADELANTO' || type === 'BONO';
+    const confirm = await Swal.fire({
+        title: '¿Eliminar movimiento?',
+        html: affectsCash
+            ? `Se eliminará el movimiento por <b>${formatCurrency(amount)}</b> y se revertirá de la planilla y del cierre de caja.`
+            : `Se eliminará el descuento por <b>${formatCurrency(amount)}</b> y se revertirá de la planilla.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar'
+    });
+    if (!confirm.isConfirmed) return;
+
+    try {
+        await window.electronAPI.deleteSalaryTransaction(id);
+        Swal.fire({ title: 'Eliminado', text: 'Movimiento eliminado y planilla recalculada.', icon: 'success', timer: 1800, showConfirmButton: false });
+        loadSalaryTransactions();
+        loadPlanillas();
+    } catch (e) {
+        console.error(e);
+        Swal.fire('Error', e.message || 'No se pudo eliminar el movimiento.', 'error');
     }
 }
 

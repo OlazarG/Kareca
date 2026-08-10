@@ -2,13 +2,15 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const crypto = require('crypto');
 
-const pool = new Pool({
-    user: process.env.DB_USER,
-    host: process.env.DB_HOST,
-    database: process.env.DB_NAME,
-    password: process.env.DB_PASSWORD,
-    port: process.env.DB_PORT,
-});
+const dbConfig = {
+    user: process.env.DB_USER || 'postgres',
+    host: process.env.DB_HOST || 'localhost',
+    database: process.env.DB_NAME || 'KARECA_DB',
+    password: typeof process.env.DB_PASSWORD === 'string' ? process.env.DB_PASSWORD : 'postgres',
+    port: Number(process.env.DB_PORT || 5432),
+};
+
+const pool = new Pool(dbConfig);
 
 
 
@@ -304,6 +306,77 @@ async function initDatabase() {
             );
         `);
 
+        // New Table: employees (Salarios / Planillas)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS employees (
+                id SERIAL PRIMARY KEY,
+                first_name VARCHAR(100) NOT NULL,
+                last_name VARCHAR(100) NOT NULL,
+                dni VARCHAR(20) UNIQUE,
+                phone VARCHAR(30),
+                address TEXT,
+                position VARCHAR(100),
+                hire_date DATE,
+                status BOOLEAN DEFAULT TRUE,
+                pay_frequency VARCHAR(20) DEFAULT 'MENSUAL', -- MENSUAL, QUINCENAL, SEMANAL
+                salary_type VARCHAR(20) DEFAULT 'FIJO',      -- FIJO, POR_DIA, POR_HORA
+                base_amount DECIMAL(15, 2) DEFAULT 0,
+                days_per_period INTEGER DEFAULT 26,
+                hours_per_day INTEGER DEFAULT 8,
+                overtime_rate DECIMAL(3, 2) DEFAULT 1.5,
+                work_days INTEGER[] DEFAULT ARRAY[1,2,3,4,5,6], -- 1=Lunes ... 7=Domingo
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        // Migration for existing employees table
+        const checkWorkDays = await client.query("SELECT column_name FROM information_schema.columns WHERE table_name='employees' AND column_name='work_days'");
+        if (checkWorkDays.rows.length === 0) {
+            console.log("Migrating: Adding work_days column...");
+            await client.query("ALTER TABLE employees ADD COLUMN work_days INTEGER[] DEFAULT ARRAY[1,2,3,4,5,6]");
+        }
+
+        // New Table: payroll_periods (Planillas)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS payroll_periods (
+                id SERIAL PRIMARY KEY,
+                employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+                period_start DATE NOT NULL,
+                period_end DATE NOT NULL,
+                expected_days INTEGER NOT NULL,
+                worked_days INTEGER NOT NULL,
+                missed_days INTEGER DEFAULT 0,
+                overtime_hours DECIMAL(8, 2) DEFAULT 0,
+                gross_salary DECIMAL(15, 2) DEFAULT 0,
+                bonus_amount DECIMAL(15, 2) DEFAULT 0,
+                advance_amount DECIMAL(15, 2) DEFAULT 0,
+                discount_amount DECIMAL(15, 2) DEFAULT 0,
+                net_salary DECIMAL(15, 2) DEFAULT 0,
+                status VARCHAR(20) DEFAULT 'PENDIENTE', -- PENDIENTE, PAGADO
+                payment_date DATE,
+                payment_method VARCHAR(30),
+                user_name VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (employee_id, period_start)
+            );
+        `);
+
+        // New Table: salary_transactions (Adelantos, Bonos, Descuentos)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS salary_transactions (
+                id SERIAL PRIMARY KEY,
+                employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+                period_id INTEGER REFERENCES payroll_periods(id) ON DELETE SET NULL,
+                transaction_type VARCHAR(20) NOT NULL, -- ADELANTO, BONO, DESCUENTO
+                amount DECIMAL(15, 2) NOT NULL,
+                description VARCHAR(255),
+                movement_id INTEGER REFERENCES movements(id) ON DELETE SET NULL,
+                payment_method VARCHAR(50) DEFAULT 'Efectivo',
+                user_name VARCHAR(100),
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
         // Seed Roles
         const checkRoles = await client.query('SELECT COUNT(*) FROM roles');
         if (parseInt(checkRoles.rows[0].count) === 0) {
@@ -354,6 +427,19 @@ async function initDatabase() {
             await client.query(`INSERT INTO role_permissions (role_id, permission_id)
                 SELECT $1, id FROM permissions WHERE name IN ('realizar_ventas', 'gestionar_clientes')`, [vendedorId]);
         }
+
+        // New permission: gestionar_salarios (idempotent for existing installations)
+        await client.query(`
+            INSERT INTO permissions (name, description)
+            VALUES ('gestionar_salarios', 'Acceso al módulo de salarios y planillas de empleados')
+            ON CONFLICT (name) DO NOTHING
+        `);
+        await client.query(`
+            INSERT INTO role_permissions (role_id, permission_id)
+            SELECT r.id, p.id FROM roles r, permissions p
+            WHERE r.name = 'Administrador' AND p.name = 'gestionar_salarios'
+            ON CONFLICT DO NOTHING
+        `);
 
         // Seed Admin User
         const checkUsers = await client.query('SELECT COUNT(*) FROM users');
@@ -1609,6 +1695,631 @@ async function updateRolePermissions(roleId, permissionIds) {
     }
 }
 
+// --- Employees (Salarios / Planillas) ---
+async function getEmployees(search = '') {
+    try {
+        let query = 'SELECT * FROM employees';
+        const params = [];
+        if (search) {
+            query += ' WHERE first_name ILIKE $1 OR last_name ILIKE $1 OR dni ILIKE $1';
+            params.push(`%${search}%`);
+        }
+        query += ' ORDER BY status DESC, last_name ASC, first_name ASC';
+        const res = await pool.query(query, params);
+        return res.rows;
+    } catch (e) {
+        console.error("Get Employees Error", e);
+        throw e;
+    }
+}
+
+async function createEmployee(data) {
+    try {
+        const res = await pool.query(`
+            INSERT INTO employees (first_name, last_name, dni, phone, address, position, hire_date, status, pay_frequency, salary_type, base_amount, days_per_period, hours_per_day, overtime_rate, work_days)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            RETURNING *
+        `, [
+            data.first_name, data.last_name, data.dni || null, data.phone || null,
+            data.address || null, data.position || null, data.hire_date || null,
+            data.status, data.pay_frequency, data.salary_type, data.base_amount,
+            data.days_per_period, data.hours_per_day, data.overtime_rate,
+            data.work_days && data.work_days.length ? data.work_days : [1,2,3,4,5,6]
+        ]);
+        return res.rows[0];
+    } catch (e) {
+        if (e.code === '23505') {
+            throw new Error(`Ya existe un empleado con el DNI '${data.dni}'.`);
+        }
+        throw e;
+    }
+}
+
+async function updateEmployee(id, data) {
+    try {
+        await pool.query(`
+            UPDATE employees
+            SET first_name = $1, last_name = $2, dni = $3, phone = $4, address = $5,
+                position = $6, hire_date = $7, status = $8, pay_frequency = $9,
+                salary_type = $10, base_amount = $11, days_per_period = $12,
+                hours_per_day = $13, overtime_rate = $14, work_days = $15
+            WHERE id = $16
+        `, [
+            data.first_name, data.last_name, data.dni || null, data.phone || null,
+            data.address || null, data.position || null, data.hire_date || null,
+            data.status, data.pay_frequency, data.salary_type, data.base_amount,
+            data.days_per_period, data.hours_per_day, data.overtime_rate,
+            data.work_days && data.work_days.length ? data.work_days : [1,2,3,4,5,6], id
+        ]);
+        return { success: true };
+    } catch (e) {
+        if (e.code === '23505') {
+            throw new Error(`Ya existe un empleado con el DNI '${data.dni}'.`);
+        }
+        throw e;
+    }
+}
+
+async function deleteEmployee(id) {
+    try {
+        await pool.query('DELETE FROM employees WHERE id = $1', [id]);
+        return { success: true };
+    } catch (e) {
+        console.error("Delete Employee Error", e);
+        throw e;
+    }
+}
+
+// ===================== Payroll Periods (Planillas) =====================
+
+function round2(x) {
+    return Math.round((x + Number.EPSILON) * 100) / 100;
+}
+
+function toYMD(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function dateOnly(d) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function countWorkDays(workDays, startDate, endDate) {
+    const set = new Set(Array.isArray(workDays) && workDays.length ? workDays.map(Number) : [1, 2, 3, 4, 5, 6]);
+    const start = dateOnly(startDate);
+    const end = dateOnly(endDate);
+    let count = 0;
+    const cur = new Date(start);
+    while (cur <= end) {
+        const dow = cur.getDay() === 0 ? 7 : cur.getDay(); // 1=Lunes ... 7=Domingo
+        if (set.has(dow)) count++;
+        cur.setDate(cur.getDate() + 1);
+    }
+    return Math.max(1, count);
+}
+
+function computePeriodAmounts(emp, referenceDays, expectedDays, workedDays, overtimeHours, bonus = 0, advance = 0, discount = 0) {
+    const base = Number(emp.base_amount) || 0;
+    const hpd = Number(emp.hours_per_day) || 8;
+    const rate = Number(emp.overtime_rate) || 1.5;
+    const ref = Math.max(Number(referenceDays) || 1, 1);
+    const ed = Math.max(Number(expectedDays) || 1, 1);
+    const wd = Math.max(Number(workedDays) || 0, 0);
+    const oh = Number(overtimeHours) || 0;
+
+    let hourlyValue = 0;
+    let gross = 0;
+
+    if (emp.salary_type === 'POR_HORA') {
+        hourlyValue = base;
+        gross = hourlyValue * wd * hpd;
+    } else if (emp.salary_type === 'POR_DIA') {
+        hourlyValue = base / Math.max(hpd, 1);
+        gross = base * wd;
+    } else { // FIJO: base = sueldo por período (mensual/quincenal/semanal); se prorratea por días trabajados (ref = días de trabajo del período)
+        const daily = base / ref;
+        hourlyValue = daily / Math.max(hpd, 1);
+        gross = daily * wd;
+    }
+
+    const overtime = hourlyValue * rate * oh;
+    const totalGross = gross + overtime;
+    const net = Math.max(0, totalGross + Number(bonus) - Number(advance) - Number(discount));
+
+    return {
+        gross_salary: round2(totalGross),
+        net_salary: round2(net),
+        missed_days: Math.max(0, ed - wd),
+        daily_value: round2(hourlyValue * Math.max(hpd, 1)),
+        hourly_value: round2(hourlyValue),
+        overtime_amount: round2(overtime)
+    };
+}
+
+function getNextPeriodDates(frequency, fromDate) {
+    const d = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
+    const start = new Date(d);
+    let end;
+    if (frequency === 'SEMANAL') {
+        const day = d.getDay(); // 0 = Domingo
+        const diff = day === 0 ? -6 : 1 - day; // Semana de Lunes a Domingo
+        start.setDate(d.getDate() + diff);
+        end = new Date(start);
+        end.setDate(end.getDate() + 6);
+    } else if (frequency === 'QUINCENAL') {
+        if (d.getDate() <= 15) {
+            start.setDate(1);
+            end = new Date(d.getFullYear(), d.getMonth(), 15);
+        } else {
+            start.setDate(16);
+            end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+        }
+    } else { // MENSUAL
+        start.setDate(1);
+        end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    }
+    return { start, end };
+}
+
+function advanceToNextPeriod(frequency, start) {
+    if (frequency === 'SEMANAL') {
+        return new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
+    }
+    if (frequency === 'QUINCENAL') {
+        if (start.getDate() === 1) {
+            return new Date(start.getFullYear(), start.getMonth(), 16);
+        }
+        return new Date(start.getFullYear(), start.getMonth() + 1, 1);
+    }
+    return new Date(start.getFullYear(), start.getMonth() + 1, 1);
+}
+
+async function getPayrollPeriods(employeeId = null, status = '') {
+    let query = `
+        SELECT p.*, e.first_name, e.last_name, e.dni, e.pay_frequency, e.salary_type,
+               e.base_amount, e.hours_per_day, e.overtime_rate, e.days_per_period, e.work_days
+        FROM payroll_periods p
+        JOIN employees e ON p.employee_id = e.id
+        WHERE 1=1`;
+    const params = [];
+    if (employeeId) {
+        params.push(employeeId);
+        query += ` AND p.employee_id = $${params.length}`;
+    }
+    if (status) {
+        params.push(status);
+        query += ` AND p.status = $${params.length}`;
+    }
+    query += ' ORDER BY p.period_start DESC, p.id DESC';
+    const res = await pool.query(query, params);
+    return res.rows;
+}
+
+async function getPayrollPeriodById(id) {
+    const res = await pool.query(`
+        SELECT p.*, e.first_name, e.last_name, e.dni, e.pay_frequency, e.salary_type,
+               e.base_amount, e.hours_per_day, e.overtime_rate, e.days_per_period, e.work_days
+        FROM payroll_periods p
+        JOIN employees e ON p.employee_id = e.id
+        WHERE p.id = $1
+    `, [id]);
+    return res.rows[0] || null;
+}
+
+async function generatePayrollPeriod(employeeId, targetDate = new Date()) {
+    const empRes = await pool.query('SELECT * FROM employees WHERE id = $1 AND status = TRUE', [employeeId]);
+    if (!empRes.rows.length) {
+        throw new Error('Empleado no encontrado o inactivo.');
+    }
+    const emp = empRes.rows[0];
+    let cursor = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+
+    for (let i = 0; i < 12; i++) {
+        const { start, end } = getNextPeriodDates(emp.pay_frequency, cursor);
+        const exists = await pool.query(
+            'SELECT id FROM payroll_periods WHERE employee_id = $1 AND period_start = $2',
+            [employeeId, toYMD(start)]
+        );
+        if (exists.rows.length === 0) {
+            const expectedDays = countWorkDays(emp.work_days, start, end);
+            const workedDays = expectedDays;
+            const calc = computePeriodAmounts(emp, expectedDays, expectedDays, workedDays, 0);
+            const res = await pool.query(`
+                INSERT INTO payroll_periods
+                    (employee_id, period_start, period_end, expected_days, worked_days, missed_days, overtime_hours, gross_salary, bonus_amount, advance_amount, discount_amount, net_salary, status)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'PENDIENTE')
+                RETURNING *
+            `, [
+                employeeId, toYMD(start), toYMD(end), expectedDays, workedDays,
+                calc.missed_days, 0, calc.gross_salary, 0, 0, 0, calc.net_salary
+            ]);
+            return res.rows[0];
+        }
+        cursor = advanceToNextPeriod(emp.pay_frequency, start);
+    }
+    throw new Error('No se encontró un período pendiente disponible.');
+}
+
+async function generateAllPayrollPeriods() {
+    const emps = await pool.query('SELECT id FROM employees WHERE status = TRUE ORDER BY id ASC');
+    const results = [];
+    for (const e of emps.rows) {
+        try {
+            results.push(await generatePayrollPeriod(e.id));
+        } catch (err) {
+            console.error('Skip period generation for employee', e.id, err.message);
+        }
+    }
+    return results;
+}
+
+async function updatePayrollPeriod(id, data) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const res = await client.query(`
+            SELECT p.*, e.pay_frequency, e.salary_type, e.base_amount, e.hours_per_day,
+                   e.overtime_rate, e.days_per_period, e.work_days
+            FROM payroll_periods p
+            JOIN employees e ON p.employee_id = e.id
+            WHERE p.id = $1
+        `, [id]);
+        if (!res.rows.length) {
+            await client.query('ROLLBACK');
+            throw new Error('Período no encontrado.');
+        }
+        const period = res.rows[0];
+        const expectedDays = data.expected_days !== undefined && data.expected_days !== null && data.expected_days !== ''
+            ? Number(data.expected_days) : Number(period.expected_days);
+        const workedDays = data.worked_days !== undefined && data.worked_days !== null && data.worked_days !== ''
+            ? Number(data.worked_days) : Number(period.worked_days);
+        const overtimeHours = data.overtime_hours !== undefined && data.overtime_hours !== null && data.overtime_hours !== ''
+            ? Number(data.overtime_hours) : Number(period.overtime_hours || 0);
+
+        const sums = await sumPeriodTransactions(client, id);
+        const bonus = sums.bonus;
+        const advance = sums.advance;
+        const discount = sums.discount;
+
+        const calc = computePeriodAmounts(period, countWorkDays(period.work_days, period.period_start, period.period_end), expectedDays, workedDays, overtimeHours, bonus, advance, discount);
+
+        const update = await client.query(`
+            UPDATE payroll_periods
+            SET expected_days = $1, worked_days = $2, missed_days = $3, overtime_hours = $4,
+                bonus_amount = $5, advance_amount = $6, discount_amount = $7,
+                gross_salary = $8, net_salary = $9
+            WHERE id = $10
+            RETURNING *
+        `, [expectedDays, workedDays, calc.missed_days, overtimeHours, bonus, advance, discount, calc.gross_salary, calc.net_salary, id]);
+        await client.query('COMMIT');
+        return update.rows[0];
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Update Payroll Period Error", e);
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
+async function markPeriodPaid(id, method = 'Efectivo', userName = null) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const period = (await client.query(`
+            SELECT p.*, e.pay_frequency, e.salary_type, e.base_amount, e.hours_per_day,
+                   e.overtime_rate, e.days_per_period, e.work_days
+            FROM payroll_periods p
+            JOIN employees e ON p.employee_id = e.id
+            WHERE p.id = $1
+        `, [id])).rows[0];
+        if (!period) {
+            await client.query('ROLLBACK');
+            throw new Error('Período no encontrado.');
+        }
+        if (period.status === 'PAGADO') {
+            await client.query('ROLLBACK');
+            throw new Error('El período ya está pagado.');
+        }
+        await recalcPeriodFromTransactions(client, id);
+        const res = await client.query(
+            `UPDATE payroll_periods
+             SET status = 'PAGADO', payment_date = CURRENT_DATE, payment_method = $1, user_name = $2
+             WHERE id = $3
+             RETURNING *`,
+            [method, userName, id]
+        );
+        await client.query('COMMIT');
+        return res.rows[0];
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Mark Payroll Period Paid Error", e);
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
+async function deletePayrollPeriod(id) {
+    try {
+        await pool.query('DELETE FROM payroll_periods WHERE id = $1', [id]);
+        return { success: true };
+    } catch (e) {
+        console.error("Delete Payroll Period Error", e);
+        throw e;
+    }
+}
+
+async function sumPeriodTransactions(client, periodId) {
+    const res = await client.query(`
+        SELECT
+            COALESCE(SUM(CASE WHEN transaction_type = 'ADELANTO' THEN amount END), 0) AS adelantos,
+            COALESCE(SUM(CASE WHEN transaction_type = 'BONO' THEN amount END), 0) AS bonos,
+            COALESCE(SUM(CASE WHEN transaction_type = 'DESCUENTO' THEN amount END), 0) AS descuentos
+        FROM salary_transactions
+        WHERE period_id = $1
+    `, [periodId]);
+    return {
+        bonus: Number(res.rows[0].bonos) || 0,
+        advance: Number(res.rows[0].adelantos) || 0,
+        discount: Number(res.rows[0].descuentos) || 0
+    };
+}
+
+async function recalcPeriodFromTransactions(client, periodId) {
+    const period = (await client.query(`
+        SELECT p.*, e.pay_frequency, e.salary_type, e.base_amount, e.hours_per_day,
+               e.overtime_rate, e.days_per_period, e.work_days
+        FROM payroll_periods p
+        JOIN employees e ON p.employee_id = e.id
+        WHERE p.id = $1
+    `, [periodId])).rows[0];
+    if (!period) return null;
+    const sums = await sumPeriodTransactions(client, periodId);
+    const calc = computePeriodAmounts(
+        period, countWorkDays(period.work_days, period.period_start, period.period_end),
+        period.expected_days, period.worked_days, period.overtime_hours || 0,
+        sums.bonus, sums.advance, sums.discount
+    );
+    const update = await client.query(`
+        UPDATE payroll_periods
+        SET bonus_amount = $1, advance_amount = $2, discount_amount = $3,
+            gross_salary = $4, net_salary = $5
+        WHERE id = $6
+        RETURNING *
+    `, [sums.bonus, sums.advance, sums.discount, calc.gross_salary, calc.net_salary, periodId]);
+    return update.rows[0];
+}
+
+async function getSalaryTransactions(filters = {}) {
+    let where = [];
+    const params = [];
+    if (filters.employee_id) {
+        params.push(Number(filters.employee_id));
+        where.push(`t.employee_id = $${params.length}`);
+    }
+    if (filters.period_id) {
+        params.push(Number(filters.period_id));
+        where.push(`t.period_id = $${params.length}`);
+    }
+    if (filters.dateFrom) {
+        params.push(`${filters.dateFrom} 00:00:00`);
+        where.push(`t.created_at >= $${params.length}`);
+    }
+    if (filters.dateTo) {
+        params.push(`${filters.dateTo} 23:59:59`);
+        where.push(`t.created_at <= $${params.length}`);
+    }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const baseFrom = `
+        FROM salary_transactions t
+        JOIN employees e ON e.id = t.employee_id
+        LEFT JOIN payroll_periods p ON p.id = t.period_id
+        ${whereClause}
+    `;
+    const res = await pool.query(`
+        SELECT t.*, e.first_name, e.last_name, p.period_start, p.period_end
+        ${baseFrom}
+        ORDER BY t.created_at DESC
+    `, params);
+    const totalsRes = await pool.query(`
+        SELECT
+            COALESCE(SUM(CASE WHEN t.transaction_type = 'ADELANTO' THEN t.amount ELSE 0 END), 0) AS adelantos,
+            COALESCE(SUM(CASE WHEN t.transaction_type = 'BONO' THEN t.amount ELSE 0 END), 0) AS bonos,
+            COALESCE(SUM(CASE WHEN t.transaction_type = 'DESCUENTO' THEN t.amount ELSE 0 END), 0) AS descuentos
+        ${baseFrom}
+    `, params);
+    return {
+        transactions: res.rows,
+        totals: totalsRes.rows[0]
+    };
+}
+
+async function getSalaryLedger(filters = {}) {
+    const salWhere = ['p.status = $1', 'p.payment_date IS NOT NULL'];
+    const salParams = ['PAGADO'];
+    if (filters.employee_id) {
+        salParams.push(Number(filters.employee_id));
+        salWhere.push(`p.employee_id = $${salParams.length}`);
+    }
+    if (filters.dateFrom) {
+        salParams.push(filters.dateFrom);
+        salWhere.push(`p.payment_date >= $${salParams.length}`);
+    }
+    if (filters.dateTo) {
+        salParams.push(filters.dateTo);
+        salWhere.push(`p.payment_date <= $${salParams.length}`);
+    }
+    const offset = salParams.length;
+    const txWhere = [];
+    const txParams = [];
+    if (filters.employee_id) {
+        txParams.push(Number(filters.employee_id));
+        txWhere.push(`t.employee_id = $${offset + txParams.length}`);
+    }
+    if (filters.dateFrom) {
+        txParams.push(`${filters.dateFrom} 00:00:00`);
+        txWhere.push(`t.created_at >= $${offset + txParams.length}`);
+    }
+    if (filters.dateTo) {
+        txParams.push(`${filters.dateTo} 23:59:59`);
+        txWhere.push(`t.created_at <= $${offset + txParams.length}`);
+    }
+    const txClause = txWhere.length ? `WHERE ${txWhere.join(' AND ')}` : '';
+    const res = await pool.query(`
+        WITH sal AS (
+            SELECT 'SALARIO' AS concepto,
+                   p.payment_date::timestamp AS fecha,
+                   e.first_name || ' ' || e.last_name AS empleado,
+                   p.id, p.employee_id, p.period_start, p.period_end,
+                   p.net_salary AS monto,
+                   p.user_name AS usuario, p.payment_method AS metodo,
+                   'Salario abonado' AS descripcion
+            FROM payroll_periods p
+            JOIN employees e ON e.id = p.employee_id
+            WHERE ${salWhere.join(' AND ')}
+        ),
+        txs AS (
+            SELECT t.transaction_type AS concepto,
+                   t.created_at AS fecha,
+                   e.first_name || ' ' || e.last_name AS empleado,
+                   t.id, t.employee_id, pp.period_start, pp.period_end,
+                   t.amount AS monto,
+                   t.user_name AS usuario, t.payment_method AS metodo,
+                   COALESCE(t.description, '') AS descripcion
+            FROM salary_transactions t
+            JOIN employees e ON e.id = t.employee_id
+            LEFT JOIN payroll_periods pp ON pp.id = t.period_id
+            ${txClause}
+        )
+        SELECT * FROM sal
+        UNION ALL
+        SELECT * FROM txs
+        ORDER BY fecha DESC
+    `, [...salParams, ...txParams]);
+    const items = res.rows;
+    const totals = { salarios: 0, adelantos: 0, bonos: 0, descuentos: 0 };
+    for (const it of items) {
+        const m = Number(it.monto) || 0;
+        if (it.concepto === 'SALARIO') totals.salarios += m;
+        else if (it.concepto === 'ADELANTO') totals.adelantos += m;
+        else if (it.concepto === 'BONO') totals.bonos += m;
+        else if (it.concepto === 'DESCUENTO') totals.descuentos += m;
+    }
+    totals.neto = totals.salarios + totals.bonos - totals.adelantos - totals.descuentos;
+    return { items, totals };
+}
+
+async function createSalaryTransaction(data) {
+    let {
+        employee_id, period_id, transaction_type, amount,
+        description, payment_method, user_name
+    } = data;
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const employee = (await client.query('SELECT * FROM employees WHERE id = $1', [employee_id])).rows[0];
+        if (!employee) throw new Error('Empleado no encontrado');
+
+        let period = null;
+        if (period_id) {
+            period = (await client.query('SELECT * FROM payroll_periods WHERE id = $1', [period_id])).rows[0];
+            if (!period) throw new Error('Período no encontrado');
+        } else if (transaction_type === 'DESCUENTO') {
+            const next = (await client.query(`
+                SELECT * FROM payroll_periods
+                WHERE employee_id = $1 AND status = 'PENDIENTE'
+                ORDER BY period_start ASC
+                LIMIT 1
+            `, [employee_id])).rows[0];
+            if (next) {
+                period = next;
+                period_id = next.id;
+            }
+        }
+
+        const periodRef = period
+            ? `Período ${period.period_start.toISOString().slice(0, 10)} - ${period.period_end.toISOString().slice(0, 10)}`
+            : 'Sin período';
+
+        const descriptionText = description && description.trim()
+            ? description.trim()
+            : `${transaction_type} de Salario - ${employee.first_name} ${employee.last_name}`;
+
+        let movementId = null;
+        const requiresMovement = transaction_type === 'ADELANTO' || transaction_type === 'BONO';
+        if (requiresMovement) {
+            const movementRes = await client.query(`
+                INSERT INTO movements (type, description, motive, user_name, payment_method, amount, date)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id
+            `, [
+                'EGRESO',
+                descriptionText,
+                periodRef,
+                user_name || 'Admin',
+                payment_method || 'Efectivo',
+                Math.round(Number(amount)),
+                new Date()
+            ]);
+            movementId = movementRes.rows[0].id;
+        }
+
+        const txRes = await client.query(`
+            INSERT INTO salary_transactions
+                (employee_id, period_id, transaction_type, amount, description, movement_id, payment_method, user_name)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *
+        `, [
+            employee_id, period_id || null, transaction_type, Number(amount),
+            descriptionText, movementId, payment_method || 'Efectivo', user_name || 'Admin'
+        ]);
+
+        let updatedPeriod = null;
+        if (period_id) {
+            updatedPeriod = await recalcPeriodFromTransactions(client, period_id);
+        }
+
+        await client.query('COMMIT');
+        return { transaction: txRes.rows[0], period: updatedPeriod };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Create Salary Transaction Error", e);
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
+async function deleteSalaryTransaction(id) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const tx = (await client.query('SELECT * FROM salary_transactions WHERE id = $1', [id])).rows[0];
+        if (!tx) throw new Error('Transacción no encontrada');
+
+        if (tx.movement_id) {
+            await client.query('DELETE FROM movements WHERE id = $1', [tx.movement_id]);
+        }
+        await client.query('DELETE FROM salary_transactions WHERE id = $1', [id]);
+
+        let updatedPeriod = null;
+        if (tx.period_id) {
+            updatedPeriod = await recalcPeriodFromTransactions(client, tx.period_id);
+        }
+
+        await client.query('COMMIT');
+        return { deleted: true, period: updatedPeriod };
+    } catch (e) {
+        await client.query('ROLLBACK');
+        console.error("Delete Salary Transaction Error", e);
+        throw e;
+    } finally {
+        client.release();
+    }
+}
+
 module.exports = {
     getPermissions,
     getRolePermissions,
@@ -1646,6 +2357,21 @@ module.exports = {
     createClient,
     updateClient,
     deleteClient,
+    getEmployees,
+    createEmployee,
+    updateEmployee,
+    deleteEmployee,
+    getPayrollPeriods,
+    getPayrollPeriodById,
+    generatePayrollPeriod,
+    generateAllPayrollPeriods,
+    updatePayrollPeriod,
+    markPeriodPaid,
+    deletePayrollPeriod,
+    getSalaryTransactions,
+    getSalaryLedger,
+    createSalaryTransaction,
+    deleteSalaryTransaction,
     getOpenTabs,
     getTabByTable,
     getTabDetails,

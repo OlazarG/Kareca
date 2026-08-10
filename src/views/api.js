@@ -165,6 +165,80 @@ window.electronAPI = {
         if (!data.success) throw new Error(data.message);
     },
 
+    // --- Salaries / Employees ---
+    getEmployees: async (search) => {
+        const data = await api('GET', '/api/salaries/employees' + qs({ search }));
+        if (!data.success) throw new Error(data.message);
+        return data.employees;
+    },
+    createEmployee: async (employeeData) => {
+        const data = await api('POST', '/api/salaries/employees', employeeData);
+        if (!data.success) throw new Error(data.message);
+        return data.employee;
+    },
+    updateEmployee: async (id, employeeData) => {
+        const data = await api('PUT', '/api/salaries/employees/' + id, employeeData);
+        if (!data.success) throw new Error(data.message);
+    },
+    deleteEmployee: async (id) => {
+        const data = await api('DELETE', '/api/salaries/employees/' + id);
+        if (!data.success) throw new Error(data.message);
+    },
+
+    // --- Salaries / Payroll Periods ---
+    getPayrollPeriods: async (employeeId, status) => {
+        const data = await api('GET', '/api/salaries/periods' + qs({ employee_id: employeeId, status }));
+        if (!data.success) throw new Error(data.message);
+        return data.periods;
+    },
+    getPayrollPeriod: async (id) => {
+        const data = await api('GET', '/api/salaries/periods/' + id);
+        if (!data.success) throw new Error(data.message);
+        return data.period;
+    },
+    generatePeriods: async (employeeId) => {
+        const data = await api('POST', '/api/salaries/periods/generate', { employee_id: employeeId || null });
+        if (!data.success) throw new Error(data.message);
+        return data.periods;
+    },
+    updatePayrollPeriod: async (id, periodData) => {
+        const data = await api('PUT', '/api/salaries/periods/' + id, periodData);
+        if (!data.success) throw new Error(data.message);
+        return data.period;
+    },
+    payPayrollPeriod: async (id, paymentMethod) => {
+        const data = await api('POST', '/api/salaries/periods/' + id + '/pay', { payment_method: paymentMethod || 'Efectivo' });
+        if (!data.success) throw new Error(data.message);
+        return data.period;
+    },
+    deletePayrollPeriod: async (id) => {
+        const data = await api('DELETE', '/api/salaries/periods/' + id);
+        if (!data.success) throw new Error(data.message);
+        return data;
+    },
+
+    // --- Salaries / Transactions (Adelantos, Bonos, Descuentos) ---
+    getSalaryTransactions: async (employeeId, periodId, dateFrom, dateTo) => {
+        const data = await api('GET', '/api/salaries/transactions' + qs({ employee_id: employeeId, period_id: periodId, dateFrom, dateTo }));
+        if (!data.success) throw new Error(data.message);
+        return { transactions: data.transactions, totals: data.totals };
+    },
+    createSalaryTransaction: async (txData) => {
+        const data = await api('POST', '/api/salaries/transactions', txData);
+        if (!data.success) throw new Error(data.message);
+        return data;
+    },
+    deleteSalaryTransaction: async (id) => {
+        const data = await api('DELETE', '/api/salaries/transactions/' + id);
+        if (!data.success) throw new Error(data.message);
+        return data;
+    },
+    getSalaryLedger: async (employeeId, dateFrom, dateTo) => {
+        const data = await api('GET', '/api/salaries/ledger' + qs({ employee_id: employeeId, dateFrom, dateTo }));
+        if (!data.success) throw new Error(data.message);
+        return { items: data.items, totals: data.totals };
+    },
+
     // --- Tabs ---
     getOpenTabs: async () => {
         const data = await api('GET', '/api/tabs');

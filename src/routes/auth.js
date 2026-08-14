@@ -1,10 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
-const { success, error } = require('../helpers/apiResponse');
-const { verifyToken, generateToken } = require('../middleware/auth');
+const { success, error, safeError } = require('../helpers/apiResponse');
+const { verifyToken, generateToken, tokenCookieOptions, COOKIE_NAME } = require('../middleware/auth');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
-router.post('/login', async (req, res) => {
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+        const username = req.body && req.body.username ? String(req.body.username).toLowerCase() : '';
+        return `${ipKeyGenerator(req.ip)}:${username}`;
+    },
+    handler: (req, res) => res.status(429).json({
+        success: false,
+        message: 'Demasiados intentos de inicio de sesión. Intente nuevamente en 15 minutos.'
+    })
+});
+
+router.post('/login', loginLimiter, async (req, res) => {
     try {
         const { username, password } = req.body;
         if (!username || !password) {
@@ -14,7 +30,8 @@ router.post('/login', async (req, res) => {
         const result = await db.authenticateUser(username, password);
         if (result.success) {
             const token = generateToken(result.user);
-            return success(res, { token, user: result.user });
+            res.cookie(COOKIE_NAME, token, tokenCookieOptions());
+            return success(res, { user: result.user });
         }
         return error(res, result.message || 'Credenciales inválidas', 401);
     } catch (err) {
@@ -23,8 +40,32 @@ router.post('/login', async (req, res) => {
     }
 });
 
+router.post('/change-password', verifyToken, async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        if (!currentPassword || !newPassword) {
+            return error(res, 'Contraseña actual y nueva requeridas');
+        }
+        if (typeof newPassword !== 'string' || newPassword.length < 8) {
+            return error(res, 'La nueva contraseña debe tener al menos 8 caracteres');
+        }
+        const result = await db.changePassword(req.user.id, currentPassword, newPassword);
+        if (!result.success) {
+            return error(res, result.message, 400);
+        }
+        return success(res, { message: 'Contraseña actualizada. Inicie sesión nuevamente.' });
+    } catch (err) {
+        return safeError(res, err);
+    }
+});
+
 router.get('/me', verifyToken, (req, res) => {
     return success(res, { user: req.user });
+});
+
+router.post('/logout', (req, res) => {
+    res.clearCookie(COOKIE_NAME, { path: '/' });
+    return success(res, { message: 'Sesión cerrada' });
 });
 
 module.exports = router;

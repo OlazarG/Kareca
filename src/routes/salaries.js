@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
-const { success, error } = require('../helpers/apiResponse');
-const { verifyToken } = require('../middleware/auth');
+const { success, error, safeError } = require('../helpers/apiResponse');
+const { verifyToken, requirePermission } = require('../middleware/auth');
 
-router.use(verifyToken);
+router.use(verifyToken, requirePermission('gestionar_salarios'));
 
 // --- Employees ---
 router.get('/employees', async (req, res) => {
@@ -13,7 +13,7 @@ router.get('/employees', async (req, res) => {
         const employees = await db.getEmployees(search || '');
         return success(res, { employees });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -22,7 +22,7 @@ router.post('/employees', async (req, res) => {
         const employee = await db.createEmployee(req.body);
         return success(res, { message: 'Empleado creado', employee }, 201);
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -31,7 +31,7 @@ router.put('/employees/:id', async (req, res) => {
         await db.updateEmployee(parseInt(req.params.id), req.body);
         return success(res, { message: 'Empleado actualizado' });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -40,7 +40,7 @@ router.delete('/employees/:id', async (req, res) => {
         await db.deleteEmployee(parseInt(req.params.id));
         return success(res, { message: 'Empleado eliminado' });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -51,7 +51,7 @@ router.get('/periods', async (req, res) => {
         const periods = await db.getPayrollPeriods(employee_id || null, status || '');
         return success(res, { periods });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -61,7 +61,7 @@ router.get('/periods/:id', async (req, res) => {
         if (!period) return error(res, 'Período no encontrado', 404);
         return success(res, { period });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -76,7 +76,7 @@ router.post('/periods/generate', async (req, res) => {
         }
         return success(res, { message: 'Período(s) generado(s)', periods }, 201);
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -85,7 +85,7 @@ router.put('/periods/:id', async (req, res) => {
         const period = await db.updatePayrollPeriod(parseInt(req.params.id), req.body);
         return success(res, { message: 'Período actualizado', period });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -98,7 +98,7 @@ router.post('/periods/:id/pay', async (req, res) => {
         );
         return success(res, { message: 'Planilla marcada como pagada', period });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -107,7 +107,7 @@ router.delete('/periods/:id', async (req, res) => {
         await db.deletePayrollPeriod(parseInt(req.params.id));
         return success(res, { message: 'Período eliminado' });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -123,7 +123,7 @@ router.get('/transactions', async (req, res) => {
         });
         return success(res, result);
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -132,7 +132,7 @@ router.post('/transactions', async (req, res) => {
         const result = await db.createSalaryTransaction(req.body);
         return success(res, { message: 'Transacción registrada', ...result }, 201);
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -141,7 +141,7 @@ router.delete('/transactions/:id', async (req, res) => {
         const result = await db.deleteSalaryTransaction(parseInt(req.params.id));
         return success(res, { message: 'Transacción eliminada', ...result });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -156,7 +156,7 @@ router.get('/ledger', async (req, res) => {
         });
         return success(res, result);
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 

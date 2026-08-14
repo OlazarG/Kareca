@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const bwipjs = require('bwip-js');
-const { success, error } = require('../helpers/apiResponse');
-const { verifyToken } = require('../middleware/auth');
+const { success, error, safeError } = require('../helpers/apiResponse');
+const { verifyToken, requirePermission } = require('../middleware/auth');
 
 router.use(verifyToken);
 
-router.post('/csv', async (req, res) => {
+router.post('/csv', requirePermission('ver_reportes'), async (req, res) => {
     try {
         const { movements } = req.body;
         if (!movements || movements.length === 0) {
@@ -37,11 +37,11 @@ router.post('/csv', async (req, res) => {
         });
     } catch (err) {
         console.error('CSV export error:', err);
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
-router.post('/word', async (req, res) => {
+router.post('/word', requirePermission('ver_reportes'), async (req, res) => {
     try {
         const { movements, dateFrom, dateTo } = req.body;
         if (!movements || movements.length === 0) {
@@ -137,7 +137,7 @@ router.post('/word', async (req, res) => {
         });
     } catch (err) {
         console.error('Word export error:', err);
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -175,7 +175,7 @@ router.post('/barcode', async (req, res) => {
         });
     } catch (err) {
         console.error('Barcode generation error:', err);
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 

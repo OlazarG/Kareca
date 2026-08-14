@@ -1,4 +1,29 @@
 // --- Utils ---
+function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/`/g, '&#96;');
+}
+
+// Escape para valores que van dentro de un string JS entre comillas simples
+// en un atributo onclick (ej: onclick="foo('${valor}')").
+function escapeJsStr(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/`/g, '&#96;');
+}
+
 function formatCurrency(amount) {
     return new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG' }).format(amount);
 }
@@ -43,7 +68,7 @@ async function loadCategories() {
             const currentValue = filterSelect.value;
             filterSelect.innerHTML = '<option value="Todas">Todas las Categorías</option>';
             categories.forEach(cat => {
-                filterSelect.innerHTML += `<option value="${cat}">${cat}</option>`;
+                filterSelect.innerHTML += `<option value="${escapeHtml(cat)}">${escapeHtml(cat)}</option>`;
             });
             // Restore selection if it still exists
             filterSelect.value = currentValue || 'Todas';
@@ -55,7 +80,7 @@ async function loadCategories() {
             const currentValue = prodSelect.value;
             prodSelect.innerHTML = '';
             categories.forEach(cat => {
-                prodSelect.innerHTML += `<option value="${cat}">${cat}</option>`;
+                prodSelect.innerHTML += `<option value="${escapeHtml(cat)}">${escapeHtml(cat)}</option>`;
             });
             if (currentValue && categories.includes(currentValue)) {
                 prodSelect.value = currentValue;
@@ -138,6 +163,12 @@ document.getElementById('login-form')?.addEventListener('submit', async (e) => {
             document.getElementById('login-overlay').style.display = 'none';
             document.querySelector('.main-wrapper').style.display = 'flex';
 
+            // Force password change before using the system
+            if (currentUser.must_change_password) {
+                promptChangePassword();
+                return;
+            }
+
             // Apply permissions (hide forbidden links / modules)
             applyRolePermissions();
 
@@ -157,9 +188,9 @@ document.getElementById('login-form')?.addEventListener('submit', async (e) => {
     }
 });
 
-function logout() {
+async function logout() {
     currentUser = null;
-    localStorage.removeItem('token');
+    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) { /* ignore */ }
     
     // Show login overlay, hide main app
     document.getElementById('login-overlay').style.display = 'flex';
@@ -173,6 +204,51 @@ function logout() {
     document.getElementById('login-username').value = '';
     document.getElementById('login-password').value = '';
     document.getElementById('login-username').focus();
+}
+
+async function promptChangePassword() {
+    const { value: formValues, isConfirmed } = await Swal.fire({
+        title: 'Cambio de contraseña obligatorio',
+        html: `
+            <input type="password" id="swal-current-pass" class="swal2-input" placeholder="Contraseña actual" autocomplete="current-password">
+            <input type="password" id="swal-new-pass" class="swal2-input" placeholder="Nueva contraseña (mín. 8 caracteres)" autocomplete="new-password">
+            <input type="password" id="swal-confirm-pass" class="swal2-input" placeholder="Confirmar nueva contraseña" autocomplete="new-password">
+        `,
+        focusConfirm: false,
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        showCancelButton: false,
+        confirmButtonText: 'Cambiar contraseña',
+        preConfirm: () => {
+            const current = document.getElementById('swal-current-pass').value;
+            const newPass = document.getElementById('swal-new-pass').value;
+            const confirm = document.getElementById('swal-confirm-pass').value;
+            if (!current || !newPass) return Swal.showValidationMessage('Complete todos los campos');
+            if (newPass.length < 8) return Swal.showValidationMessage('La contraseña debe tener al menos 8 caracteres');
+            if (newPass !== confirm) return Swal.showValidationMessage('Las contraseñas no coinciden');
+            return { current, newPass };
+        }
+    });
+
+    if (!isConfirmed || !formValues) return;
+
+    try {
+        const res = await window.electronAPI.changePassword(currentUser.username, formValues.current, formValues.newPass);
+        if (res.success) {
+            Swal.fire('Éxito', 'Contraseña actualizada. Inicie sesión nuevamente.', 'success').then(() => {
+                logout();
+            });
+        } else {
+            Swal.fire('Error', res.message || 'No se pudo cambiar la contraseña.', 'error').then(() => {
+                promptChangePassword();
+            });
+        }
+    } catch (error) {
+        console.error("Change password error:", error);
+        Swal.fire('Error', 'No se pudo cambiar la contraseña.', 'error').then(() => {
+            promptChangePassword();
+        });
+    }
 }
 
 function applyRolePermissions() {
@@ -302,11 +378,11 @@ async function loadDashboard() {
             lowStock.forEach(p => {
                 const row = `
                     <tr>
-                        <td class="fw-bold">${p.name}</td>
-                        <td><span class="badge bg-secondary">${p.category}</span></td>
+                        <td class="fw-bold">${escapeHtml(p.name)}</td>
+                        <td><span class="badge bg-secondary">${escapeHtml(p.category)}</span></td>
                         <td class="text-center"><span class="badge bg-danger fs-6">${p.stock_total ?? 0}</span></td>
                         <td class="text-end">
-                            <button class="btn btn-sm btn-outline-primary" onclick="goToPurchases('${p.name}')">
+                            <button class="btn btn-sm btn-outline-primary" onclick="goToPurchases('${escapeJsStr(p.name)}')">
                                 <i class="bi bi-bag-plus"></i> Reponer
                             </button>
                         </td>
@@ -466,8 +542,8 @@ function renderPurchaseCart() {
         const row = `
             <tr>
                 <td>
-                    <div class="fw-bold">${item.name}</div>
-                    <small class="text-muted">${item.variant_name}</small>
+                    <div class="fw-bold">${escapeHtml(item.name)}</div>
+                    <small class="text-muted">${escapeHtml(item.variant_name)}</small>
                 </td>
                 <td>
                     <input type="text" class="form-control form-control-sm currency-input" 
@@ -575,10 +651,10 @@ function addVariantRow(name = '', code = '', qty = 1, price = '') {
     }
 
     row.innerHTML = `
-        <td><input type="text" class="form-control" placeholder="Ej: Six Pack" required name="v-name" value="${name}"></td>
+        <td><input type="text" class="form-control" placeholder="Ej: Six Pack" required name="v-name" value="${escapeHtml(name)}"></td>
         <td>
             <div class="input-group input-group-sm">
-                <input type="text" class="form-control" required name="v-code" placeholder="Código" value="${code}">
+                <input type="text" class="form-control" required name="v-code" placeholder="Código" value="${escapeHtml(code)}">
                 <button class="btn btn-outline-primary" type="button" onclick="openBarcodeGenerator(this)" title="Generar código de barras">
                     <i class="bi bi-upc-scan"></i>
                 </button>
@@ -728,7 +804,7 @@ async function loadProducts(page = 1) {
         products.forEach(p => {
             // ... (Row generation logic same as before) ...
             const variantCount = p.variants_data ? p.variants_data.length : 0;
-            const varsTooltip = p.variants_data ? p.variants_data.map(v => `${v.variant_name}: ${v.quantity}`).join(', ') : '-';
+            const varsTooltip = p.variants_data ? p.variants_data.map(v => `${escapeHtml(v.variant_name)}: ${v.quantity}`).join(', ') : '-';
 
             // Calc Total Stock (Backend does it, or we sum variants if decoupled? Now decoupling means manual but backend returns stock_total)
             // Use p.stock_total
@@ -737,14 +813,14 @@ async function loadProducts(page = 1) {
             const row = `
                 <tr>
                     <td>${p.id}</td>
-                    <td>${p.variants_data && p.variants_data[0] ? p.variants_data[0].barcode : '-'}</td>
-                    <td class="fw-bold text-primary">${p.name}</td>
-                    <td><span class="badge bg-secondary">${p.category}</span></td>
+                    <td>${p.variants_data && p.variants_data[0] ? escapeHtml(p.variants_data[0].barcode) : '-'}</td>
+                    <td class="fw-bold text-primary">${escapeHtml(p.name)}</td>
+                    <td><span class="badge bg-secondary">${escapeHtml(p.category)}</span></td>
                     <td title="${varsTooltip}">${variantCount} varian.</td>
                     <td class="${stockClass}">${p.stock_total}</td>
                     <td>
                         <button class="btn btn-sm btn-outline-warning me-1" onclick="editProduct(${p.id})"><i class="bi bi-pencil"></i></button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDelete(${p.id}, '${p.name}')"><i class="bi bi-trash"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDelete(${p.id}, '${escapeJsStr(p.name)}')"><i class="bi bi-trash"></i></button>
                     </td>
                 </tr>
             `;
@@ -788,10 +864,10 @@ async function editProduct(id) {
             const row = document.createElement('tr');
             row.classList.add('variant-row');
             row.innerHTML = `
-                <td><input type="text" class="form-control" value="${v.variant_name}" required name="v-name"></td>
+                <td><input type="text" class="form-control" value="${escapeHtml(v.variant_name)}" required name="v-name"></td>
                 <td>
                     <div class="input-group input-group-sm">
-                        <input type="text" class="form-control" value="${v.barcode}" required name="v-code">
+                        <input type="text" class="form-control" value="${escapeHtml(v.barcode)}" required name="v-code">
                         <button class="btn btn-outline-primary" type="button" onclick="openBarcodeGenerator(this)" title="Generar código de barras">
                             <i class="bi bi-upc-scan"></i>
                         </button>
@@ -965,8 +1041,8 @@ async function loadRolePermissionsGrid() {
                         ${isChecked ? 'checked' : ''}
                         style="width:1.2em;height:1.2em;cursor:pointer;">
                     <label class="form-check-label w-100" for="perm-${perm.id}" style="cursor:pointer;">
-                        <span class="fw-semibold d-block">${perm.description || perm.name}</span>
-                        <small class="text-muted font-monospace">${perm.name}</small>
+                        <span class="fw-semibold d-block">${escapeHtml(perm.description || perm.name)}</span>
+                        <small class="text-muted font-monospace">${escapeHtml(perm.name)}</small>
                     </label>
                 </div>`;
             container.appendChild(col);
@@ -1070,10 +1146,10 @@ async function posSearch() {
         htmlContent += `
             <button class="list-group-item list-group-item-action" onclick="selectPosItem(${index})">
                 <div class="d-flex w-100 justify-content-between">
-                    <h6 class="mb-1 fw-bold">${opt.product.name}</h6>
+                    <h6 class="mb-1 fw-bold">${escapeHtml(opt.product.name)}</h6>
                     <small class="text-primary fw-bold">${formatCurrency(opt.variant.sale_price)}</small>
                 </div>
-                <small class="text-muted">${opt.variant.variant_name} | Stock: ${opt.variant.quantity}u/eq</small>
+                <small class="text-muted">${escapeHtml(opt.variant.variant_name)} | Stock: ${opt.variant.quantity}u/eq</small>
             </button>
         `;
     });
@@ -1135,8 +1211,8 @@ function renderCart() {
         const row = `
             <tr>
                 <td>
-                    <div class="fw-bold">${item.name}</div>
-                    <small class="text-muted">${item.variant_name}</small>
+                    <div class="fw-bold">${escapeHtml(item.name)}</div>
+                    <small class="text-muted">${escapeHtml(item.variant_name)}</small>
                 </td>
                 <td>${formatCurrency(item.price)}</td>
                 <td>
@@ -1340,7 +1416,7 @@ async function loadReports(page = 1) {
                                         </div>
                                         <div>
                                             <span class="text-muted d-block" style="font-size: 0.7rem;">Responsable</span>
-                                            <strong>${m.user_name}</strong>
+                                            <strong>${escapeHtml(m.user_name)}</strong>
                                         </div>
                                     </div>
                                 </div>
@@ -1360,16 +1436,16 @@ async function loadReports(page = 1) {
                         <td>${dateStr} <small class="text-muted">${timeStr}</small></td>
                         <td><span class="badge ${badgeClass}">${m.type}</span></td>
                         <td>
-                            ${m.description}
-                            ${m.is_edited ? `<i class="bi bi-pencil-fill text-warning ms-1" title="Editado: ${m.edit_reason}"></i>` : ''}
+                            ${escapeHtml(m.description)}
+                            ${m.is_edited ? `<i class="bi bi-pencil-fill text-warning ms-1" title="Editado: ${escapeHtml(m.edit_reason)}"></i>` : ''}
                             ${isIngreso ? `
                                 <i class="bi bi-pencil-square text-primary ms-2 cursor-pointer" onclick="initiateEditSale(${m.id})" title="Editar Venta" style="cursor: pointer;"></i>
                                 <i class="bi bi-printer text-secondary ms-2 cursor-pointer" onclick="reprintTicket(${m.id})" title="Reimprimir Ticket" style="cursor: pointer;"></i>
                             ` : ''}
                         </td>
-                        <td>${m.motive || '-'}</td>
-                        <td>${m.user_name}</td>
-                        <td>${m.payment_method || '-'}</td>
+                        <td>${escapeHtml(m.motive || '-')}</td>
+                        <td>${escapeHtml(m.user_name)}</td>
+                        <td>${escapeHtml(m.payment_method || '-')}</td>
                         <td class="text-end text-success">${isIngreso ? formatCurrency(amount) : '-'}</td>
                         <td class="text-end text-danger">${isEgreso ? formatCurrency(amount) : '-'}</td>
                         <td class="text-end fw-bold">${formatCurrency(runningBalance)}</td>
@@ -1384,7 +1460,7 @@ async function loadReports(page = 1) {
 
     } catch (e) {
         console.error(e);
-        tbody.innerHTML = `<tr><td colspan="9" class="text-center text-danger fw-bold">FATAL ERROR: ${e.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center text-danger fw-bold">FATAL ERROR: ${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
@@ -1700,7 +1776,7 @@ async function loadPosHistory() {
                 <tr>
                     <td class="text-muted">${timeStr}</td>
                     <td>
-                        <small>${motive}</small>
+                        <small>${escapeHtml(motive)}</small>
                         ${m.is_edited ? '<span class="badge bg-warning text-dark" style="font-size: 0.7em;">Editado</span>' : ''}
                     </td>
                     <td class="text-end">
@@ -1964,7 +2040,7 @@ function toggleEditScenario() {
                         div.innerHTML = `
                             <input class="form-check-input restock-check" type="checkbox" value="${index}" id="restock-check-${index}">
                             <label class="form-check-label" for="restock-check-${index}">
-                                ${item.name} (${item.variant_name}) x${item.qty}
+                                ${escapeHtml(item.name)} (${escapeHtml(item.variant_name)}) x${item.qty}
                             </label>
                         `;
                         container.appendChild(div);
@@ -2166,7 +2242,7 @@ async function loadSalonTables() {
                 <div class="card h-100 border-2 ${cardBorder} shadow-sm">
                     <div class="card-body p-3 d-flex flex-column justify-content-between">
                         <div class="d-flex justify-content-between align-items-center mb-2">
-                            <h5 class="card-title fw-bold mb-0">Mesa ${t.number}</h5>
+                            <h5 class="card-title fw-bold mb-0">Mesa ${escapeHtml(t.number)}</h5>
                             ${statusBadge}
                         </div>
                         <div class="text-center my-3">
@@ -2174,7 +2250,7 @@ async function loadSalonTables() {
                         </div>
                         <div>
                             ${footerBtn}
-                            <button class="btn btn-link btn-sm text-danger w-100 mt-2 p-0 text-center text-decoration-none" style="font-size: 0.8rem;" onclick="confirmDeleteTable(${t.id}, '${t.number}')">
+                            <button class="btn btn-link btn-sm text-danger w-100 mt-2 p-0 text-center text-decoration-none" style="font-size: 0.8rem;" onclick="confirmDeleteTable(${t.id}, '${escapeJsStr(t.number)}')">
                                 <i class="bi bi-trash"></i> Eliminar Mesa
                             </button>
                         </div>
@@ -2309,7 +2385,7 @@ async function loadPosTables() {
         const tables = await window.electronAPI.getTables();
         select.innerHTML = '<option value="">-- Seleccionar Mesa --</option>';
         tables.forEach(t => {
-            const label = t.status === 'Ocupada' ? `Mesa ${t.number} (Ocupada)` : `Mesa ${t.number}`;
+            const label = t.status === 'Ocupada' ? `Mesa ${escapeHtml(t.number)} (Ocupada)` : `Mesa ${escapeHtml(t.number)}`;
             select.innerHTML += `<option value="${t.id}">${label}</option>`;
         });
     } catch (e) {
@@ -2493,15 +2569,15 @@ function renderSplitUI() {
             div.className = 'd-flex justify-content-between align-items-center border-bottom py-2';
             div.innerHTML = `
                 <div class="flex-grow-1">
-                    <span class="fw-bold">${item.product_name}</span>
-                    <small class="text-muted ms-2">${item.variant_name || ''}</small>
+                    <span class="fw-bold">${escapeHtml(item.product_name)}</span>
+                    <small class="text-muted ms-2">${escapeHtml(item.variant_name || '')}</small>
                     <span class="badge bg-secondary ms-2">x${item.qty}</span>
                     <span class="ms-2 text-primary fw-bold">${formatCurrency(item.subtotal)}</span>
                 </div>
                 <div class="btn-group btn-group-sm">
                     ${window.splitGroups.map((g, gi) => `
-                        <button class="btn btn-outline-primary" onclick="assignItemToGroup(${ui}, ${gi})" title="Asignar a ${g.label}">
-                            ${g.label.replace('Persona ', 'P')}
+                        <button class="btn btn-outline-primary" onclick="assignItemToGroup(${ui}, ${gi})" title="Asignar a ${escapeHtml(g.label)}">
+                            ${escapeHtml(g.label.replace('Persona ', 'P'))}
                         </button>
                     `).join('')}
                 </div>
@@ -2527,7 +2603,7 @@ function renderSplitUI() {
         card.innerHTML = `
             <div class="card-header bg-primary bg-opacity-10 py-2 d-flex justify-content-between align-items-center">
                 <div>
-                    <span class="fw-bold"><i class="bi bi-person-circle me-1"></i>${group.label}</span>
+                    <span class="fw-bold"><i class="bi bi-person-circle me-1"></i>${escapeHtml(group.label)}</span>
                     <span class="badge bg-primary ms-2">${formatCurrency(groupTotal)}</span>
                 </div>
                 <div>
@@ -2542,7 +2618,7 @@ function renderSplitUI() {
                     <tbody>
                         ${group.items.map((item, ii) => `
                             <tr>
-                                <td class="ps-0">${item.product_name} <small class="text-muted">${item.variant_name || ''}</small></td>
+                                <td class="ps-0">${escapeHtml(item.product_name)} <small class="text-muted">${escapeHtml(item.variant_name || '')}</small></td>
                                 <td class="text-center">x${item.qty}</td>
                                 <td class="text-end">${formatCurrency(item.subtotal)}</td>
                                 <td class="text-end pe-0" style="width: 30px;">
@@ -2953,13 +3029,13 @@ async function loadClients() {
             const row = `
                 <tr>
                     <td>${c.id}</td>
-                    <td class="fw-bold">${c.dni_ruc}</td>
-                    <td>${c.razon_social}</td>
-                    <td>${c.email || '-'}</td>
-                    <td>${c.direccion || '-'}</td>
+                    <td class="fw-bold">${escapeHtml(c.dni_ruc)}</td>
+                    <td>${escapeHtml(c.razon_social)}</td>
+                    <td>${escapeHtml(c.email || '-')}</td>
+                    <td>${escapeHtml(c.direccion || '-')}</td>
                     <td>
                         <button class="btn btn-sm btn-outline-warning me-1" onclick="editClient(${c.id})"><i class="bi bi-pencil"></i></button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteClient(${c.id}, '${c.razon_social}')"><i class="bi bi-trash"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteClient(${c.id}, '${escapeJsStr(c.razon_social)}')"><i class="bi bi-trash"></i></button>
                     </td>
                 </tr>
             `;
@@ -3146,20 +3222,21 @@ async function loadEmployees() {
 
         employees.forEach(e => {
             const fullName = `${e.first_name} ${e.last_name}`;
+            const escapedFullName = escapeHtml(fullName);
             const row = `
                 <tr>
                     <td>${e.id}</td>
-                    <td class="fw-bold">${fullName}</td>
-                    <td>${e.dni || '-'}</td>
-                    <td>${e.position || '-'}</td>
-                    <td>${FREQUENCY_LABELS[e.pay_frequency] || e.pay_frequency}</td>
-                    <td>${SALARY_TYPE_LABELS[e.salary_type] || e.salary_type}</td>
+                    <td class="fw-bold">${escapedFullName}</td>
+                    <td>${escapeHtml(e.dni || '-')}</td>
+                    <td>${escapeHtml(e.position || '-')}</td>
+                    <td>${escapeHtml(FREQUENCY_LABELS[e.pay_frequency] || e.pay_frequency)}</td>
+                    <td>${escapeHtml(SALARY_TYPE_LABELS[e.salary_type] || e.salary_type)}</td>
                     <td class="text-end">${formatCurrency(e.base_amount || 0)}</td>
                     <td class="text-center">${(Array.isArray(e.work_days) ? e.work_days.filter(Boolean).length : 6)} d/sem</td>
                     <td>${e.status ? '<span class="badge bg-success">Activo</span>' : '<span class="badge bg-secondary">Inactivo</span>'}</td>
                     <td>
                         <button class="btn btn-sm btn-outline-warning me-1" onclick="editEmployee(${e.id})"><i class="bi bi-pencil"></i></button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteEmployee(${e.id}, '${fullName.replace(/'/g, "\\'")}')"><i class="bi bi-trash"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteEmployee(${e.id}, '${escapeJsStr(fullName)}')"><i class="bi bi-trash"></i></button>
                     </td>
                 </tr>
             `;
@@ -3365,7 +3442,7 @@ async function loadPlanillas() {
         const current = select.value;
         let options = '<option value="">Todos los empleados</option>';
         employees.filter(e => e.status).forEach(e => {
-            options += `<option value="${e.id}">${e.first_name} ${e.last_name}</option>`;
+            options += `<option value="${e.id}">${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}</option>`;
         });
         select.innerHTML = options;
         select.value = current || '';
@@ -3392,13 +3469,14 @@ async function loadPeriods() {
 
         periods.forEach(p => {
             const name = `${p.first_name} ${p.last_name}`;
-            const freqBadge = `<span class="badge bg-light text-dark border ms-1">${FREQUENCY_LABELS[p.pay_frequency] || p.pay_frequency}</span>`;
+            const escapedName = escapeHtml(name);
+            const freqBadge = `<span class="badge bg-light text-dark border ms-1">${escapeHtml(FREQUENCY_LABELS[p.pay_frequency] || p.pay_frequency)}</span>`;
             const statusBadge = p.status === 'PAGADO'
                 ? '<span class="badge bg-success">Pagado</span>'
                 : '<span class="badge bg-warning text-dark">Pendiente</span>';
             const row = `
                 <tr>
-                    <td class="fw-bold">${name}</td>
+                    <td class="fw-bold">${escapedName}</td>
                     <td class="periodo-cell">${fmtDate(p.period_start)} - ${fmtDate(p.period_end)}${freqBadge}</td>
                     <td class="text-center">${p.expected_days}</td>
                     <td class="text-center">${p.worked_days}</td>
@@ -3412,8 +3490,8 @@ async function loadPeriods() {
                     <td>${statusBadge}</td>
                     <td class="text-center">
                         <button class="btn btn-sm btn-outline-warning" onclick="openPeriodEdit(${p.id})" title="Editar planilla"><i class="bi bi-pencil"></i></button>
-                        ${p.status !== 'PAGADO' ? `<button class="btn btn-sm btn-success ms-1" onclick="confirmPayPeriod(${p.id}, '${name.replace(/'/g, "\\'")}', ${p.net_salary || 0})" title="Marcar como pagada"><i class="bi bi-check2-circle"></i></button>` : ''}
-                        <button class="btn btn-sm btn-outline-danger ms-1" onclick="confirmDeletePeriod(${p.id}, '${name.replace(/'/g, "\\'")}', '${fmtDate(p.period_start)} - ${fmtDate(p.period_end)}')" title="Eliminar período"><i class="bi bi-trash"></i></button>
+                        ${p.status !== 'PAGADO' ? `<button class="btn btn-sm btn-success ms-1" onclick="confirmPayPeriod(${p.id}, '${escapeJsStr(name)}', ${p.net_salary || 0})" title="Marcar como pagada"><i class="bi bi-check2-circle"></i></button>` : ''}
+                        <button class="btn btn-sm btn-outline-danger ms-1" onclick="confirmDeletePeriod(${p.id}, '${escapeJsStr(name)}', '${fmtDate(p.period_start)} - ${fmtDate(p.period_end)}')" title="Eliminar período"><i class="bi bi-trash"></i></button>
                     </td>
                 </tr>
             `;
@@ -3635,7 +3713,7 @@ async function loadSalarySection() {
             const current = filterSelect.value;
             let options = '<option value="">Todos los empleados</option>';
             employees.forEach(e => {
-                options += `<option value="${e.id}">${e.first_name} ${e.last_name}</option>`;
+                options += `<option value="${e.id}">${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}</option>`;
             });
             filterSelect.innerHTML = options;
             filterSelect.value = current || '';
@@ -3694,14 +3772,14 @@ async function loadSalaryTransactions() {
                 : (t.concepto === 'BONO' ? 'text-success' : 'text-danger');
             const acciones = isSalary
                 ? '<span class="text-muted">-</span>'
-                : `<button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteSalaryTx(${t.id}, ${t.monto}, '${t.concepto}')" title="Eliminar movimiento"><i class="bi bi-trash"></i></button>`;
+                : `<button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteSalaryTx(${t.id}, ${t.monto}, '${escapeJsStr(t.concepto)}')" title="Eliminar movimiento"><i class="bi bi-trash"></i></button>`;
             const row = `
                 <tr>
-                    <td class="fw-bold">${t.empleado}</td>
-                    <td>${TX_TYPE_BADGES[t.concepto] || t.concepto}</td>
-                    <td>${t.descripcion || '-'}</td>
+                    <td class="fw-bold">${escapeHtml(t.empleado)}</td>
+                    <td>${escapeHtml(TX_TYPE_BADGES[t.concepto] || t.concepto)}</td>
+                    <td>${escapeHtml(t.descripcion || '-')}</td>
                     <td>${periodText}</td>
-                    <td>${t.metodo || '-'}</td>
+                    <td>${escapeHtml(t.metodo || '-')}</td>
                     <td class="text-end fw-bold ${montoClass}">${formatCurrency(t.monto)}</td>
                     <td>${fmtDate(t.fecha)}</td>
                     <td class="text-center">${acciones}</td>
@@ -3756,7 +3834,7 @@ async function openSalaryTxModal(type) {
     try {
         const employees = await window.electronAPI.getEmployees('');
         employees.filter(e => e.status).forEach(e => {
-            empSelect.innerHTML += `<option value="${e.id}">${e.first_name} ${e.last_name}</option>`;
+            empSelect.innerHTML += `<option value="${e.id}">${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}</option>`;
         });
         if (prevEmp) empSelect.value = prevEmp;
     } catch (e) {
@@ -4073,13 +4151,13 @@ async function loadUsers() {
             const row = `
                 <tr>
                     <td>${u.id}</td>
-                    <td class="fw-bold">${u.username}</td>
-                    <td><span class="badge bg-primary">${u.role_name || 'Sin Rol'}</span></td>
+                    <td class="fw-bold">${escapeHtml(u.username)}</td>
+                    <td><span class="badge bg-primary">${escapeHtml(u.role_name || 'Sin Rol')}</span></td>
                     <td>${statusBadge}</td>
                     <td>${createdDate}</td>
                     <td>
                         <button class="btn btn-sm btn-outline-warning me-1" onclick="editUser(${u.id})"><i class="bi bi-pencil"></i></button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteUser(${u.id}, '${u.username}')" ${u.username === 'admin' ? 'disabled' : ''}><i class="bi bi-trash"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteUser(${u.id}, '${escapeJsStr(u.username)}')" ${u.username === 'admin' ? 'disabled' : ''}><i class="bi bi-trash"></i></button>
                     </td>
                 </tr>
             `;
@@ -4102,7 +4180,7 @@ async function loadUserRoles() {
     try {
         const roles = await window.electronAPI.getRoles();
         roles.forEach(r => {
-            select.innerHTML += `<option value="${r.id}">${r.name}</option>`;
+            select.innerHTML += `<option value="${r.id}">${escapeHtml(r.name)}</option>`;
         });
         if (currentVal) select.value = currentVal;
     } catch (e) {

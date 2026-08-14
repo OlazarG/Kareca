@@ -1,19 +1,22 @@
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
 const helmet = require('helmet');
+const { rateLimit } = require('express-rate-limit');
 const path = require('path');
 
 const db = require('./src/database/db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const isProduction = process.env.NODE_ENV === 'production';
+
+app.set('trust proxy', isProduction ? 1 : false);
 
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.jsdelivr.net"],
+            scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
             scriptSrcAttr: ["'unsafe-inline'"],
             styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net", "https://fonts.googleapis.com"],
             imgSrc: ["'self'", "data:", "blob:"],
@@ -22,8 +25,37 @@ app.use(helmet({
         }
     }
 }));
-app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+
+const globalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 1000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: 'Demasiadas solicitudes. Intente nuevamente más tarde.' }
+});
+app.use(globalLimiter);
+
+app.use((req, res, next) => {
+    res.removeHeader('Access-Control-Allow-Origin');
+    res.removeHeader('Access-Control-Allow-Credentials');
+    const origin = req.headers.origin;
+    if (origin) {
+        try {
+            const originHost = new URL(origin).host;
+            if (originHost !== req.headers.host) {
+                return res.status(403).json({ success: false, message: 'Origen no permitido' });
+            }
+        } catch (e) {
+            return res.status(403).json({ success: false, message: 'Origen no permitido' });
+        }
+    }
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+    next();
+});
+
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'src/views')));
 
 const authRouter = require('./src/routes/auth');

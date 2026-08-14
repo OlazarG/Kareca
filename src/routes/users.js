@@ -1,17 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
-const { success, error } = require('../helpers/apiResponse');
-const { verifyToken } = require('../middleware/auth');
+const { success, error, safeError } = require('../helpers/apiResponse');
+const { verifyToken, requirePermission } = require('../middleware/auth');
 
-router.use(verifyToken);
+router.use(verifyToken, requirePermission('gestionar_usuarios'));
 
 router.get('/', async (req, res) => {
     try {
         const users = await db.getUsers();
         return success(res, { users });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -20,7 +20,7 @@ router.post('/', async (req, res) => {
         await db.createUser(req.body);
         return success(res, { message: 'Usuario creado' }, 201);
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -29,7 +29,7 @@ router.put('/:id', async (req, res) => {
         await db.updateUser(parseInt(req.params.id), req.body);
         return success(res, { message: 'Usuario actualizado' });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -38,7 +38,7 @@ router.delete('/:id', async (req, res) => {
         await db.deleteUser(parseInt(req.params.id));
         return success(res, { message: 'Usuario eliminado' });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -47,7 +47,7 @@ router.get('/roles', async (req, res) => {
         const roles = await db.getRoles();
         return success(res, { roles });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -56,7 +56,7 @@ router.get('/permissions', async (req, res) => {
         const permissions = await db.getPermissions();
         return success(res, { permissions });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -65,7 +65,7 @@ router.get('/roles/:roleId/permissions', async (req, res) => {
         const permissionIds = await db.getRolePermissions(parseInt(req.params.roleId));
         return success(res, { permissionIds });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 
@@ -74,7 +74,7 @@ router.put('/roles/:roleId/permissions', async (req, res) => {
         await db.updateRolePermissions(parseInt(req.params.roleId), req.body.permissionIds);
         return success(res, { message: 'Permisos actualizados' });
     } catch (err) {
-        return error(res, err.message, 500);
+        return safeError(res, err);
     }
 });
 

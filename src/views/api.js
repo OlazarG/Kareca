@@ -5,18 +5,13 @@ function qs(params) {
 }
 
 async function api(method, path, body) {
-    const token = localStorage.getItem('token');
     const headers = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const options = { method, headers };
+    const options = { method, headers, credentials: 'same-origin' };
     if (body) options.body = JSON.stringify(body);
     const res = await fetch(path, options);
-    if (res.status === 401) {
-        const hadToken = !!localStorage.getItem('token');
-        localStorage.removeItem('token');
-        if (hadToken) {
-            window.location.reload();
-        }
+    if (res.status === 401 && path !== '/api/auth/login') {
+        try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) { /* ignore */ }
+        window.location.reload();
         return { success: false, message: 'Sesión expirada' };
     }
     return res.json();
@@ -39,10 +34,12 @@ window.electronAPI = {
     login: async (username, password) => {
         const data = await api('POST', '/api/auth/login', { username, password });
         if (data.success) {
-            localStorage.setItem('token', data.token);
             return { success: true, user: data.user };
         }
         return data;
+    },
+    changePassword: async (username, currentPassword, newPassword) => {
+        return await api('POST', '/api/auth/change-password', { currentPassword, newPassword });
     },
 
     // --- Categories ---

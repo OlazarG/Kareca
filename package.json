@@ -50,6 +50,7 @@
     "escpos": "^3.0.0-alpha.6",
     "escpos-usb": "^3.0.0-alpha.4",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.6.2",
     "helmet": "^8.2.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.16.3"

@@ -418,6 +418,10 @@ ipcMain.handle('login', async (event, username, password) => {
     return await db.authenticateUser(username, password);
 });
 
+ipcMain.handle('change-password', async (event, username, currentPassword, newPassword) => {
+    return await db.changePasswordByUsername(username, currentPassword, newPassword);
+});
+
 ipcMain.handle('get-users', async () => {
     return await db.getUsers();
 });

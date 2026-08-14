@@ -1,6 +1,9 @@
 require('dotenv').config();
 const { Pool } = require('pg');
 const crypto = require('crypto');
+const { promisify } = require('util');
+
+const pbkdf2Async = promisify(crypto.pbkdf2);
 
 const dbConfig = {
     user: process.env.DB_USER || 'postgres',
@@ -28,18 +31,43 @@ pool.on('connect', (client) => {
     }
 });
 
-// Helper functions for Password Hashing and Verification using native crypto pbkdf2
-function hashPassword(password) {
-    const salt = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-    return `${salt}:${hash}`;
+const { userError } = require('../helpers/apiResponse');
+
+const PBKDF2_ITERATIONS = 210000;
+const PBKDF2_KEYLEN = 64;
+const PBKDF2_DIGEST = 'sha512';
+const PBKDF2_LEGACY_ITERATIONS = 1000;
+
+function timingSafeEqual(a, b) {
+    const bufA = Buffer.isBuffer(a) ? a : Buffer.from(a, 'hex');
+    const bufB = Buffer.isBuffer(b) ? b : Buffer.from(b, 'hex');
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
 }
 
-function verifyPassword(password, storedHash) {
-    if (!storedHash || !storedHash.includes(':')) return false;
-    const [salt, hash] = storedHash.split(':');
-    const verifyHash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-    return hash === verifyHash;
+async function hashPassword(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = await pbkdf2Async(password, salt, PBKDF2_ITERATIONS, PBKDF2_KEYLEN, PBKDF2_DIGEST);
+    return `${salt}:${PBKDF2_ITERATIONS}:${hash.toString('hex')}`;
+}
+
+async function checkPassword(password, storedHash) {
+    if (!storedHash || typeof storedHash !== 'string') return { match: false };
+    const parts = storedHash.split(':');
+    let salt, hashHex, iterations;
+    if (parts.length === 2) {
+        [salt, hashHex] = parts;
+        iterations = PBKDF2_LEGACY_ITERATIONS;
+    } else if (parts.length === 3) {
+        [salt, iterationsStr, hashHex] = parts;
+        iterations = parseInt(iterationsStr, 10);
+        if (!Number.isInteger(iterations) || iterations < PBKDF2_LEGACY_ITERATIONS) return { match: false };
+    } else {
+        return { match: false };
+    }
+    const candidate = await pbkdf2Async(password, salt, iterations, PBKDF2_KEYLEN, PBKDF2_DIGEST);
+    const match = timingSafeEqual(Buffer.from(hashHex, 'hex'), candidate);
+    return { match, needsRehash: iterations < PBKDF2_ITERATIONS };
 }
 
 // Initialize Database Schema
@@ -302,9 +330,28 @@ async function initDatabase() {
                 password_hash VARCHAR(255) NOT NULL,
                 role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL,
                 status BOOLEAN DEFAULT TRUE,
+                must_change_password BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
         `);
+
+        // Migration: add must_change_password to existing users tables
+        await client.query(`
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE
+        `);
+
+        // Sync the 'admin' flag with reality: force a password change ONLY while it
+        // still uses the old known default password (admin/admin). This both covers
+        // legacy installs and self-heals the flag if a previous version forced it
+        // unconditionally on every boot.
+        const adminRow = await client.query(`SELECT id, password_hash FROM users WHERE username = 'admin'`);
+        if (adminRow.rows.length === 1) {
+            const { match } = await checkPassword('admin', adminRow.rows[0].password_hash);
+            await client.query(
+                `UPDATE users SET must_change_password = $1 WHERE id = $2`,
+                [match, adminRow.rows[0].id]
+            );
+        }
 
         // New Table: employees (Salarios / Planillas)
         await client.query(`
@@ -447,9 +494,12 @@ async function initDatabase() {
             console.log("Seeding default admin user...");
             const adminRole = await client.query("SELECT id FROM roles WHERE name = 'Administrador'");
             const adminRoleId = adminRole.rows[0].id;
-            const defaultAdminHash = hashPassword('admin');
-            await client.query(`INSERT INTO users (username, password_hash, role_id, status) VALUES 
-                ('admin', $1, $2, TRUE)`, [defaultAdminHash, adminRoleId]);
+            const tempPassword = crypto.randomBytes(12).toString('base64url');
+            const defaultAdminHash = await hashPassword(tempPassword);
+            await client.query(`INSERT INTO users (username, password_hash, role_id, status, must_change_password) VALUES 
+                ('admin', $1, $2, TRUE, TRUE)`, [defaultAdminHash, adminRoleId]);
+            console.log(`Admin inicial creado. Usuario: admin | Contraseña temporal: ${tempPassword}`);
+            console.log('Deberá cambiar la contraseña al iniciar sesión.');
         }
 
         await client.query('COMMIT');
@@ -586,7 +636,7 @@ async function createProductWithVariants(productData, variants) {
     } catch (e) {
         await client.query('ROLLBACK');
         if (e.code === '23505') {
-            throw new Error(`Error: El código de barras '${e.detail}' ya está registrado.`);
+            throw userError(`Error: El código de barras '${e.detail}' ya está registrado.`);
         }
         throw e;
     } finally {
@@ -642,7 +692,7 @@ async function updateProductWithVariants(id, productData, variants) {
     } catch (e) {
         await client.query('ROLLBACK');
         if (e.code === '23505') {
-            throw new Error(`Error: El código de barras '${e.detail}' ya está registrado.`);
+            throw userError(`Error: El código de barras '${e.detail}' ya está registrado.`);
         }
         throw e;
     } finally {
@@ -886,7 +936,7 @@ async function closeRegister(finalCash, user) {
 
         // 1. Get current Open Session
         const sessionRes = await client.query("SELECT * FROM cash_sessions WHERE status = 'OPEN' ORDER BY id DESC LIMIT 1");
-        if (sessionRes.rows.length === 0) throw new Error("No hay caja abierta.");
+        if (sessionRes.rows.length === 0) throw userError("No hay caja abierta.");
         const session = sessionRes.rows[0];
 
         // 2. Calculate Totals (Movements since opened_at)
@@ -1223,7 +1273,7 @@ async function openTab(tableId, clientId = null, userName = 'Cajero') {
         // Check if there is already an open tab on this table
         const checkTab = await client.query('SELECT id FROM tabs WHERE table_id = $1 AND status = \'OPEN\'', [tableId]);
         if (checkTab.rows.length > 0) {
-            throw new Error("Ya existe una comanda abierta para esta mesa.");
+            throw userError("Ya existe una comanda abierta para esta mesa.");
         }
 
         // Open the tab
@@ -1322,7 +1372,7 @@ async function closeTabAndProcessSale(tabId, paymentData) {
         await client.query('BEGIN');
 
         const tabRes = await client.query('SELECT * FROM tabs WHERE id = $1 AND status = \'OPEN\'', [tabId]);
-        if (tabRes.rows.length === 0) throw new Error("La comanda no existe o ya está cerrada.");
+        if (tabRes.rows.length === 0) throw userError("La comanda no existe o ya está cerrada.");
         const tab = tabRes.rows[0];
 
         const itemsRes = await client.query(`
@@ -1447,13 +1497,13 @@ async function splitTabAndProcessSale(tabId, splits) {
         await client.query('BEGIN');
 
         const tabRes = await client.query("SELECT * FROM tabs WHERE id = $1 AND status = 'OPEN'", [tabId]);
-        if (tabRes.rows.length === 0) throw new Error("La comanda no existe o ya está cerrada.");
+        if (tabRes.rows.length === 0) throw userError("La comanda no existe o ya está cerrada.");
         const tab = tabRes.rows[0];
 
         // Validate all splits have items
         for (let i = 0; i < splits.length; i++) {
             if (!splits[i].items || splits[i].items.length === 0) {
-                throw new Error(`El grupo ${i + 1} no tiene productos asignados.`);
+                throw userError(`El grupo ${i + 1} no tiene productos asignados.`);
             }
         }
 
@@ -1557,9 +1607,14 @@ async function authenticateUser(username, password) {
     }
 
     const user = res.rows[0];
-    const isPasswordCorrect = verifyPassword(password, user.password_hash);
-    if (!isPasswordCorrect) {
+    const check = await checkPassword(password, user.password_hash);
+    if (!check.match) {
         return { success: false, message: 'Contraseña incorrecta.' };
+    }
+
+    if (check.needsRehash) {
+        const newHash = await hashPassword(password);
+        await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, user.id]);
     }
 
     // Get permissions
@@ -1579,9 +1634,42 @@ async function authenticateUser(username, password) {
             username: user.username,
             role_name: user.role_name,
             role_id: user.role_id,
-            permissions: permissions
+            permissions: permissions,
+            must_change_password: !!user.must_change_password
         }
     };
+}
+
+async function changePassword(userId, currentPassword, newPassword) {
+    const res = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+    if (res.rows.length === 0) return { success: false, message: 'Usuario no encontrado.' };
+
+    const user = res.rows[0];
+    const check = await checkPassword(currentPassword, user.password_hash);
+    if (!check.match) return { success: false, message: 'La contraseña actual es incorrecta.' };
+
+    const passwordHash = await hashPassword(newPassword);
+    await pool.query(
+        'UPDATE users SET password_hash = $1, must_change_password = FALSE WHERE id = $2',
+        [passwordHash, userId]
+    );
+    return { success: true };
+}
+
+async function changePasswordByUsername(username, currentPassword, newPassword) {
+    const res = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    if (res.rows.length === 0) return { success: false, message: 'Usuario no encontrado.' };
+
+    const user = res.rows[0];
+    const check = await checkPassword(currentPassword, user.password_hash);
+    if (!check.match) return { success: false, message: 'La contraseña actual es incorrecta.' };
+
+    const passwordHash = await hashPassword(newPassword);
+    await pool.query(
+        'UPDATE users SET password_hash = $1, must_change_password = FALSE WHERE id = $2',
+        [passwordHash, user.id]
+    );
+    return { success: true };
 }
 
 async function getUsers() {
@@ -1601,7 +1689,7 @@ async function getRoles() {
 
 async function createUser(userData) {
     const { username, password, role_id } = userData;
-    const passwordHash = hashPassword(password);
+    const passwordHash = await hashPassword(password);
     try {
         await pool.query(
             'INSERT INTO users (username, password_hash, role_id, status) VALUES ($1, $2, $3, TRUE)',
@@ -1610,7 +1698,7 @@ async function createUser(userData) {
         return { success: true };
     } catch (e) {
         if (e.code === '23505') {
-            throw new Error(`El usuario '${username}' ya existe.`);
+            throw userError(`El usuario '${username}' ya existe.`);
         }
         throw e;
     }
@@ -1622,7 +1710,7 @@ async function updateUser(id, userData) {
     try {
         await client.query('BEGIN');
         if (password && password.trim() !== '') {
-            const passwordHash = hashPassword(password);
+            const passwordHash = await hashPassword(password);
             await client.query(
                 'UPDATE users SET username = $1, password_hash = $2, role_id = $3, status = $4 WHERE id = $5',
                 [username, passwordHash, role_id, status, id]
@@ -1638,7 +1726,7 @@ async function updateUser(id, userData) {
     } catch (e) {
         await client.query('ROLLBACK');
         if (e.code === '23505') {
-            throw new Error(`El nombre de usuario '${username}' ya está en uso.`);
+            throw userError(`El nombre de usuario '${username}' ya está en uso.`);
         }
         throw e;
     } finally {
@@ -1649,7 +1737,7 @@ async function updateUser(id, userData) {
 async function deleteUser(id) {
     const checkRes = await pool.query('SELECT username FROM users WHERE id = $1', [id]);
     if (checkRes.rows.length > 0 && checkRes.rows[0].username === 'admin') {
-        throw new Error('No se puede eliminar el usuario administrador principal (admin).');
+        throw userError('No se puede eliminar el usuario administrador principal (admin).');
     }
 
     await pool.query('DELETE FROM users WHERE id = $1', [id]);
@@ -1729,7 +1817,7 @@ async function createEmployee(data) {
         return res.rows[0];
     } catch (e) {
         if (e.code === '23505') {
-            throw new Error(`Ya existe un empleado con el DNI '${data.dni}'.`);
+            throw userError(`Ya existe un empleado con el DNI '${data.dni}'.`);
         }
         throw e;
     }
@@ -1754,7 +1842,7 @@ async function updateEmployee(id, data) {
         return { success: true };
     } catch (e) {
         if (e.code === '23505') {
-            throw new Error(`Ya existe un empleado con el DNI '${data.dni}'.`);
+            throw userError(`Ya existe un empleado con el DNI '${data.dni}'.`);
         }
         throw e;
     }
@@ -1909,7 +1997,7 @@ async function getPayrollPeriodById(id) {
 async function generatePayrollPeriod(employeeId, targetDate = new Date()) {
     const empRes = await pool.query('SELECT * FROM employees WHERE id = $1 AND status = TRUE', [employeeId]);
     if (!empRes.rows.length) {
-        throw new Error('Empleado no encontrado o inactivo.');
+        throw userError('Empleado no encontrado o inactivo.');
     }
     const emp = empRes.rows[0];
     let cursor = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
@@ -1937,7 +2025,7 @@ async function generatePayrollPeriod(employeeId, targetDate = new Date()) {
         }
         cursor = advanceToNextPeriod(emp.pay_frequency, start);
     }
-    throw new Error('No se encontró un período pendiente disponible.');
+    throw userError('No se encontró un período pendiente disponible.');
 }
 
 async function generateAllPayrollPeriods() {
@@ -1966,7 +2054,7 @@ async function updatePayrollPeriod(id, data) {
         `, [id]);
         if (!res.rows.length) {
             await client.query('ROLLBACK');
-            throw new Error('Período no encontrado.');
+            throw userError('Período no encontrado.');
         }
         const period = res.rows[0];
         const expectedDays = data.expected_days !== undefined && data.expected_days !== null && data.expected_days !== ''
@@ -2015,11 +2103,11 @@ async function markPeriodPaid(id, method = 'Efectivo', userName = null) {
         `, [id])).rows[0];
         if (!period) {
             await client.query('ROLLBACK');
-            throw new Error('Período no encontrado.');
+            throw userError('Período no encontrado.');
         }
         if (period.status === 'PAGADO') {
             await client.query('ROLLBACK');
-            throw new Error('El período ya está pagado.');
+            throw userError('El período ya está pagado.');
         }
         await recalcPeriodFromTransactions(client, id);
         const res = await client.query(
@@ -2220,12 +2308,12 @@ async function createSalaryTransaction(data) {
     try {
         await client.query('BEGIN');
         const employee = (await client.query('SELECT * FROM employees WHERE id = $1', [employee_id])).rows[0];
-        if (!employee) throw new Error('Empleado no encontrado');
+        if (!employee) throw userError('Empleado no encontrado');
 
         let period = null;
         if (period_id) {
             period = (await client.query('SELECT * FROM payroll_periods WHERE id = $1', [period_id])).rows[0];
-            if (!period) throw new Error('Período no encontrado');
+            if (!period) throw userError('Período no encontrado');
         } else if (transaction_type === 'DESCUENTO') {
             const next = (await client.query(`
                 SELECT * FROM payroll_periods
@@ -2297,7 +2385,7 @@ async function deleteSalaryTransaction(id) {
     try {
         await client.query('BEGIN');
         const tx = (await client.query('SELECT * FROM salary_transactions WHERE id = $1', [id])).rows[0];
-        if (!tx) throw new Error('Transacción no encontrada');
+        if (!tx) throw userError('Transacción no encontrada');
 
         if (tx.movement_id) {
             await client.query('DELETE FROM movements WHERE id = $1', [tx.movement_id]);
@@ -2325,6 +2413,8 @@ module.exports = {
     getRolePermissions,
     updateRolePermissions,
     authenticateUser,
+    changePassword,
+    changePasswordByUsername,
     getUsers,
     getRoles,
     createUser,

@@ -143,12 +143,46 @@ document.getElementById('login-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const usernameInput = document.getElementById('login-username');
     const passwordInput = document.getElementById('login-password');
+    const loginError = document.getElementById('login-error');
+    const loginBtn = document.querySelector('#login-form button[type="submit"]');
+
+    const showError = (message) => {
+        if (loginError) {
+            loginError.textContent = message || 'No se pudo iniciar sesión.';
+            loginError.classList.remove('d-none');
+        }
+        if (typeof Swal !== 'undefined') {
+            Swal.fire({
+                title: 'Error de Acceso',
+                text: message || 'No se pudo iniciar sesión.',
+                icon: 'error',
+                confirmButtonColor: '#3085d6'
+            });
+        }
+    };
+    const clearError = () => {
+        if (loginError) {
+            loginError.classList.add('d-none');
+            loginError.textContent = '';
+        }
+    };
+
     const username = usernameInput.value.trim();
     const password = passwordInput.value;
+    if (!username || !password) {
+        showError('Ingresá tu usuario y contraseña.');
+        return;
+    }
+
+    if (loginBtn) {
+        loginBtn.disabled = true;
+        loginBtn.textContent = 'INGRESANDO...';
+    }
 
     try {
         const response = await window.electronAPI.login(username, password);
-        if (response.success) {
+        if (response && response.success) {
+            clearError();
             currentUser = response.user;
             
             // Clean inputs
@@ -175,16 +209,17 @@ document.getElementById('login-form')?.addEventListener('submit', async (e) => {
             // Load initial view
             showSection('dashboard');
         } else {
-            Swal.fire({
-                title: 'Error de Acceso',
-                text: response.message || 'Credenciales inválidas.',
-                icon: 'error',
-                confirmButtonColor: '#3085d6'
-            });
+            const message = (response && response.message) || 'Credenciales inválidas.';
+            showError(message);
         }
     } catch (error) {
         console.error("Login Error", error);
-        Swal.fire('Error', 'Ocurrió un error al intentar iniciar sesión.', 'error');
+        showError('Ocurrió un error al intentar iniciar sesión. Revisá la conexión e intentá de nuevo.');
+    } finally {
+        if (loginBtn) {
+            loginBtn.disabled = false;
+            loginBtn.textContent = 'INGRESAR';
+        }
     }
 });
 
@@ -1642,7 +1677,7 @@ async function processSale() {
                 // Print Ticket
                 const ticketData = {
                     id: result.id,
-                    storeName: 'Aurea Accesorios',
+                    storeName: 'Cerámica Café',
                     items: saleData.items,
                     total: saleData.total,
                     method: saleData.method,
@@ -2164,7 +2199,7 @@ async function reprintTicket(id) {
 
         const ticketData = {
             id: sale.id,
-            storeName: 'Aurea Accesorios',
+            storeName: 'Cerámica Café',
             items: items,
             total: sale.amount,
             method: sale.payment_method,

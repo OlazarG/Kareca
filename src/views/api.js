@@ -8,13 +8,22 @@ async function api(method, path, body) {
     const headers = { 'Content-Type': 'application/json' };
     const options = { method, headers, credentials: 'same-origin' };
     if (body) options.body = JSON.stringify(body);
-    const res = await fetch(path, options);
+    let res;
+    try {
+        res = await fetch(path, options);
+    } catch (e) {
+        return { success: false, message: 'No se pudo conectar con el servidor.' };
+    }
     if (res.status === 401 && path !== '/api/auth/login') {
         try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) { /* ignore */ }
         window.location.reload();
         return { success: false, message: 'Sesión expirada' };
     }
-    return res.json();
+    try {
+        return await res.json();
+    } catch (e) {
+        return { success: false, message: `Error del servidor (${res.status}). Intente nuevamente.` };
+    }
 }
 
 function downloadFile(content, filename, mimeType) {

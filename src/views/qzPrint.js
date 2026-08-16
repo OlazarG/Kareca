@@ -38,7 +38,7 @@ async function buildTicketReceipt(ticketData) {
     const p = new EscposBuilder();
 
     p.init();
-    p.font('b').align('ct').size(1, 1).bold(true).line(storeName || 'Aurea Accesorios');
+    p.font('b').align('ct').size(1, 1).bold(true).line(storeName || 'Cerámica Café');
     p.font('b').size(0, 0).bold(false).line('Ticket #' + (id || ''));
     p.line(date || new Date().toLocaleString('es-PY'));
     p.feed(1);

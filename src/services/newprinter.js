@@ -42,7 +42,7 @@ function printTicketBody(printer, dashes, data, lineWidth) {
     printer
         .style('b')
         .size(0, 0) // Tamaño mínimo absoluto
-        .text('Aurea Accesorios')
+        .text('Cerámica Café')
         .style('n')
         .text('Ventas Minoristas Y Mayoristas')
         .text('WhatsApp:0987122835')
@@ -104,7 +104,7 @@ function printTicketBody(printer, dashes, data, lineWidth) {
         .close();
 }
 
-async function testPrintAurea(data = {}) {
+async function testPrintCeramica(data = {}) {
     const path = require('path');
     return new Promise((resolve, reject) => {
         try {
@@ -156,4 +156,4 @@ async function testPrintAurea(data = {}) {
     });
 }
 
-module.exports = { testPrintAurea };
+module.exports = { testPrintCeramica };

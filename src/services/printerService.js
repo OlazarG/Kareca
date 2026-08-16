@@ -41,7 +41,7 @@ function formatLine(leftText, rightText, width = 42) {
 
 // Imprime el cuerpo del ticket con los datos reales de la venta
 function printTicketBody(printer, dashes, data, lineWidth) {
-    const storeName = data.storeName || 'Aurea Accesorios';
+    const storeName = data.storeName || 'Cerámica Café';
     const storeSubtitle = data.storeSubtitle || 'Ventas Minoristas Y Mayoristas';
     const storePhone = data.storePhone || 'WhatsApp:0987122835';
     const ticketNum = data.ticketNum || data.id || '1';

@@ -2,14 +2,23 @@ const jwt = require('jsonwebtoken');
 const { error } = require('../helpers/apiResponse');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'kareca-dev-secret-change-in-production';
+const tokenBlacklist = new Set();
 
 function verifyToken(req, res, next) {
-    const header = req.headers.authorization;
-    if (!header || !header.startsWith('Bearer ')) {
-        return error(res, 'Token requerido', 401);
+    let token = req.cookies?.token;
+
+    if (!token) {
+        const header = req.headers.authorization;
+        if (!header || !header.startsWith('Bearer ')) {
+            return error(res, 'Token requerido', 401);
+        }
+        token = header.split(' ')[1];
     }
 
-    const token = header.split(' ')[1];
+    if (tokenBlacklist.has(token)) {
+        return error(res, 'Token inválido o expirado', 401);
+    }
+
     try {
         req.user = jwt.verify(token, JWT_SECRET);
         next();
@@ -26,4 +35,8 @@ function generateToken(user) {
     );
 }
 
-module.exports = { verifyToken, generateToken };
+function blacklistToken(token) {
+    tokenBlacklist.add(token);
+}
+
+module.exports = { verifyToken, generateToken, blacklistToken };

@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
-const { success, error } = require('../helpers/apiResponse');
+const { success, error, serverError } = require('../helpers/apiResponse');
 const { verifyToken } = require('../middleware/auth');
+const { authorize } = require('../middleware/authorize');
+const { validate, schemas } = require('../helpers/validators');
 
 router.use(verifyToken);
 
@@ -11,27 +13,27 @@ router.get('/status', async (req, res) => {
         const status = await db.getRegisterStatus();
         return success(res, { session: status });
     } catch (err) {
-        return error(res, err.message, 500);
+        return serverError(res, err);
     }
 });
 
-router.post('/open', async (req, res) => {
+router.post('/open', authorize('gestionar_caja'), validate(schemas.registerOpen), async (req, res) => {
     try {
         const { amount } = req.body;
         await db.openRegister(amount, req.user.username);
         return success(res, { message: 'Caja abierta' });
     } catch (err) {
-        return error(res, err.message, 500);
+        return serverError(res, err);
     }
 });
 
-router.post('/close', async (req, res) => {
+router.post('/close', authorize('gestionar_caja'), validate(schemas.registerClose), async (req, res) => {
     try {
         const { finalCash } = req.body;
         await db.closeRegister(finalCash, req.user.username);
         return success(res, { message: 'Caja cerrada' });
     } catch (err) {
-        return error(res, err.message, 500);
+        return serverError(res, err);
     }
 });
 

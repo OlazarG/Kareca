@@ -41,6 +41,9 @@ window.electronAPI = {
         if (data.success) {
             localStorage.setItem('token', data.token);
             return { success: true, user: data.user };
+        }else
+{
+            return { success: false, message: data.message || 'Error de autenticación' };
         }
         return data;
     },

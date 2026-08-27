@@ -50,8 +50,11 @@
     "escpos": "^3.0.0-alpha.6",
     "escpos-usb": "^3.0.0-alpha.4",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.6.1",
     "helmet": "^8.2.0",
+    "joi": "^18.2.3",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "selfsigned": "^5.5.0"
   }
 }

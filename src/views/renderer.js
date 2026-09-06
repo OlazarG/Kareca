@@ -461,6 +461,8 @@ function showSection(sectionId) {
     }
 
     document.querySelectorAll('.content-area > div').forEach(div => div.style.display = 'none');
+    const ticketSection = document.getElementById('ticket-section');
+    if (ticketSection) ticketSection.style.display = sectionId === 'ticket' ? 'block' : 'none';
     document.getElementById(`${sectionId}-section`).style.display = 'block';
 
     // Update Sidebar Active State
@@ -505,6 +507,9 @@ function showSection(sectionId) {
     }
     if (sectionId === 'users') {
         loadUsers();
+    }
+    if (sectionId === 'ticket') {
+        loadTicketSection();
     }
 }
 
@@ -1466,6 +1471,14 @@ async function loadReports(page = 1) {
                 const isEgreso = m.type === 'EGRESO';
                 const badgeClass = isIngreso ? 'bg-success' : (isEgreso ? 'bg-danger' : 'bg-secondary');
 
+                // Extract voucher number from column
+                let voucherInfo = '';
+                if (isIngreso && m.voucher_number && (m.payment_method === 'TC' || m.payment_method === 'TD')) {
+                    voucherInfo = `<br><small class="text-muted">Comprobante: ${escapeHtml(m.voucher_number)}</small>`;
+                }
+
+                const paymentMethodDisplay = m.payment_method ? `${escapeHtml(m.payment_method)}${voucherInfo}` : '-';
+
                 rowHtml = `
                     <tr>
                         <td>${dateStr} <small class="text-muted">${timeStr}</small></td>
@@ -1480,7 +1493,7 @@ async function loadReports(page = 1) {
                         </td>
                         <td>${escapeHtml(m.motive || '-')}</td>
                         <td>${escapeHtml(m.user_name)}</td>
-                        <td>${escapeHtml(m.payment_method || '-')}</td>
+                        <td>${paymentMethodDisplay}</td>
                         <td class="text-end text-success">${isIngreso ? formatCurrency(amount) : '-'}</td>
                         <td class="text-end text-danger">${isEgreso ? formatCurrency(amount) : '-'}</td>
                         <td class="text-end fw-bold">${formatCurrency(runningBalance)}</td>
@@ -1534,6 +1547,7 @@ function initiateCheckout() {
     document.getElementById('payment-method').value = 'Efectivo';
     document.getElementById('amount-received').value = '';
     document.getElementById('change-display').innerText = 'Gs. 0';
+    document.getElementById('pos-voucher-number').value = '';  // Limpiar campo de comprobante
     togglePaymentInputs();
 
     // Show Modal
@@ -1549,12 +1563,20 @@ function initiateCheckout() {
 function togglePaymentInputs() {
     const method = document.getElementById('payment-method').value;
     const cashSection = document.getElementById('cash-payment-section');
+    const voucherSection = document.getElementById('pos-voucher-section');
 
     if (method === 'Efectivo') {
         cashSection.style.display = 'block';
+        voucherSection.style.display = 'none';
         setTimeout(() => document.getElementById('amount-received').focus(), 100);
+    } else if (method === 'Tarjeta de Crédito' || method === 'Tarjeta de Débito') {
+        cashSection.style.display = 'none';
+        voucherSection.style.display = 'block';
+        document.getElementById('change-display').innerText = 'Gs. 0';
+        setTimeout(() => document.getElementById('pos-voucher-number').focus(), 100);
     } else {
         cashSection.style.display = 'none';
+        voucherSection.style.display = 'none';
         document.getElementById('change-display').innerText = 'Gs. 0'; // Reset change
     }
 }
@@ -1584,8 +1606,12 @@ function calculateChange() {
 }
 
 async function processSale() {
-    const method = document.getElementById('payment-method').value;
+    let method = document.getElementById('payment-method').value;
     let received = 0;
+
+    // Convert card methods to abbreviations
+    if (method === 'Tarjeta de Crédito') method = 'TC';
+    if (method === 'Tarjeta de Débito') method = 'TD';
 
     if (method === 'Efectivo') {
         received = parseCurrency(document.getElementById('amount-received').value);
@@ -1623,7 +1649,8 @@ async function processSale() {
                 change: (received - currentTotal) > 0 ? (received - currentTotal) : 0,
                 clientName: clientName,
                 observation: document.getElementById('pos-observation').value,
-                user: 'Cajero'
+                user: 'Cajero',
+                voucherNumber: document.getElementById('pos-voucher-number').value || ''
             };
 
             const result = await window.electronAPI.closeTabAndProcessSale(tab.id, paymentData);
@@ -1640,6 +1667,38 @@ async function processSale() {
                     showConfirmButton: false
                 });
 
+                // Print Ticket (FACTURA) para mesa
+                const ivaAmount = Math.round(currentTotal / 11 * 100) / 100;
+                const subtotal = Math.round((currentTotal - ivaAmount) * 100) / 100;
+                const ticketData = {
+                    id: result.id || tab.id,
+                    storeName: 'Cerámica Café',
+                    items: tab.items || [],
+                    subtotal: subtotal,
+                    iva_amount: ivaAmount,
+                    iva_pct: '10',
+                    total: currentTotal,
+                    method: paymentData.method,
+                    date: new Date().toLocaleString('es-PY'),
+                    received: paymentData.received,
+                    change: paymentData.change,
+                    clientName: clientName,
+                    clientRuc: window.selectedCheckoutClient ? window.selectedCheckoutClient.dni_ruc : '',
+                    table: tab.table_number || '',
+                    voucherNumber: paymentData.voucherNumber
+                };
+
+                window.electronAPI.printTicket(ticketData).then(res => {
+                    if (!res.success) {
+                        console.warn("No se pudo imprimir el ticket", res.error);
+                        Swal.fire({
+                            toast: true, position: 'bottom-end',
+                            icon: 'warning', title: 'Impresora no detectada',
+                            showConfirmButton: false, timer: 3000
+                        });
+                    }
+                });
+
                 // Clear states
                 clearCart();
                 clearSelectedCheckoutClient();
@@ -1653,11 +1712,12 @@ async function processSale() {
                 items: cart,
                 total: currentTotal,
                 method: method,
-                user: currentUser ? currentUser.username : 'Cajero', 
-                clientName: clientName, 
+                user: currentUser ? currentUser.username : 'Cajero',
+                clientName: clientName,
                 observation: document.getElementById('pos-observation').value,
                 received: received,
-                change: (received - currentTotal) > 0 ? (received - currentTotal) : 0
+                change: (received - currentTotal) > 0 ? (received - currentTotal) : 0,
+                voucherNumber: document.getElementById('pos-voucher-number').value || ''
             };
 
             const result = await window.electronAPI.processSale(saleData);
@@ -1674,16 +1734,24 @@ async function processSale() {
                     showConfirmButton: false
                 });
 
-                // Print Ticket
+                // Print Ticket (FACTURA)
+                const ivaAmount = Math.round(saleData.total / 11 * 100) / 100;
+                const subtotal = Math.round((saleData.total - ivaAmount) * 100) / 100;
                 const ticketData = {
                     id: result.id,
                     storeName: 'Cerámica Café',
                     items: saleData.items,
+                    subtotal: subtotal,
+                    iva_amount: ivaAmount,
+                    iva_pct: '10',
                     total: saleData.total,
                     method: saleData.method,
                     date: new Date().toLocaleString('es-PY'),
                     received: saleData.received,
-                    change: saleData.change
+                    change: saleData.change,
+                    clientName: window.selectedCheckoutClient ? window.selectedCheckoutClient.razon_social : clientName,
+                    clientRuc: window.selectedCheckoutClient ? window.selectedCheckoutClient.dni_ruc : '',
+                    voucherNumber: saleData.voucherNumber
                 };
 
                 window.electronAPI.printTicket(ticketData).then(res => {
@@ -2205,7 +2273,8 @@ async function reprintTicket(id) {
             method: sale.payment_method,
             date: new Date(sale.date).toLocaleString('es-PY'),
             received: received,
-            change: change
+            change: change,
+            voucherNumber: sale.voucher_number || ''
         };
 
         const res = await window.electronAPI.printTicket(ticketData);
@@ -2260,7 +2329,7 @@ async function loadSalonTables() {
                 cardBorder = 'border-danger';
                 footerBtn = `
                     <div class="d-flex gap-1">
-                        <button class="btn btn-sm btn-outline-primary" onclick="loadTabInPOS(${t.id})" title="Pedido"><i class="bi bi-pencil-square"></i></button>
+                        <button class="btn btn-sm btn-outline-primary" onclick="openTabFromDashboard(${t.id})" title="Pedido"><i class="bi bi-pencil-square"></i></button>
                         <button class="btn btn-sm btn-outline-info" onclick="initiateSplit(${t.id})" title="Dividir Cuenta"><i class="bi bi-diagram-2"></i></button>
                         <button class="btn btn-sm btn-success flex-grow-1" onclick="quickCheckoutTab(${t.id})"><i class="bi bi-cash-coin"></i> Cobrar</button>
                     </div>
@@ -2268,7 +2337,7 @@ async function loadSalonTables() {
             } else {
                 statusBadge = `<span class="badge bg-warning text-dark">Pendiente</span>`;
                 cardBorder = 'border-warning';
-                footerBtn = `<button class="btn btn-sm btn-warning w-100" onclick="loadTabInPOS(${t.id})"><i class="bi bi-cash-coin"></i> Cobrar Cuenta</button>`;
+                footerBtn = `<button class="btn btn-sm btn-warning w-100" onclick="openTabFromDashboard(${t.id})"><i class="bi bi-cash-coin"></i> Cobrar Cuenta</button>`;
             }
 
             const col = document.createElement('div');
@@ -2357,7 +2426,7 @@ async function confirmDeleteTable(id, number) {
 async function quickOpenTab(tableId) {
     try {
         const clients = await window.electronAPI.getClients('');
-        
+
         let clientOptions = '<option value="">CLIENTE OCASIONAL</option>';
         clients.forEach(c => {
             clientOptions += `<option value="${c.id}">${c.razon_social} (RUC: ${c.dni_ruc})</option>`;
@@ -2383,7 +2452,7 @@ async function quickOpenTab(tableId) {
         if (formValues !== undefined) {
             const clientId = formValues ? parseInt(formValues) : null;
             await window.electronAPI.openTab(tableId, clientId, currentUser ? currentUser.username : 'Cajero');
-            loadTabInPOS(tableId);
+            await loadTabInPOS(tableId);
         }
     } catch (e) {
         console.error("Error opening tab:", e);
@@ -2391,24 +2460,33 @@ async function quickOpenTab(tableId) {
     }
 }
 
-function loadTabInPOS(tableId) {
+async function loadTabInPOS(tableId) {
     showSection('pos');
-    
+
     document.getElementById('pos-op-type').value = 'table';
     togglePosOpType();
-    
-    setTimeout(() => {
-        const select = document.getElementById('pos-table-select');
-        select.value = tableId;
-        loadSelectedTableTab();
-    }, 100);
+
+    // Asegurar que las mesas estén cargadas en el dropdown
+    await loadPosTables();
+
+    // Ahora seleccionar la mesa
+    const select = document.getElementById('pos-table-select');
+    select.value = tableId;
+
+    // Cargar los productos de la mesa
+    await loadSelectedTableTab();
+}
+
+function openTabFromDashboard(tableId) {
+    loadTabInPOS(tableId).catch(e => {
+        console.error("Error loading table:", e);
+        Swal.fire('Error', 'No se pudo cargar la mesa.', 'error');
+    });
 }
 
 async function quickCheckoutTab(tableId) {
-    loadTabInPOS(tableId);
-    setTimeout(() => {
-        initiateCheckout();
-    }, 200);
+    await loadTabInPOS(tableId);
+    initiateCheckout();
 }
 
 // --- POS Tables Logic ---
@@ -3031,14 +3109,41 @@ async function saveFastClient() {
 
     try {
         const clientData = { dni_ruc: ruc, razon_social: name, email, direccion: address };
+        console.log('[saveFastClient] Registrando cliente:', clientData);
         const saved = await window.electronAPI.createClient(clientData);
+        console.log('[saveFastClient] Resultado:', saved);
+
         if (saved) {
             window.selectedCheckoutClient = saved;
             updateCheckoutClientIndicator();
-            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Cliente registrado', timer: 1500, showConfirmButton: false });
+
+            // Clear form fields
+            document.getElementById('fast-client-ruc').value = '';
+            document.getElementById('fast-client-name').value = '';
+            document.getElementById('fast-client-email').value = '';
+            document.getElementById('fast-client-address').value = '';
+
+            // Hide form
+            const fastForm = document.getElementById('checkout-client-fast-form');
+            if (fastForm) {
+                fastForm.style.display = 'none';
+                console.log('[saveFastClient] Formulario ocultado');
+            }
+
+            // Show success message
+            Swal.fire({
+                title: '¡Cliente Registrado!',
+                text: `${name} fue registrado correctamente y ya está seleccionado.`,
+                icon: 'success',
+                confirmButtonText: 'OK'
+            }).then(() => {
+                console.log('[saveFastClient] Flujo completado');
+            });
+        } else {
+            Swal.fire('Error', 'La respuesta del servidor fue vacía.', 'error');
         }
     } catch (e) {
-        console.error(e);
+        console.error('[saveFastClient] Error:', e);
         Swal.fire('Error', 'No se pudo registrar el cliente (RUC duplicado o inválido).', 'error');
     }
 }
@@ -3811,7 +3916,7 @@ async function loadSalaryTransactions() {
             const row = `
                 <tr>
                     <td class="fw-bold">${escapeHtml(t.empleado)}</td>
-                    <td>${escapeHtml(TX_TYPE_BADGES[t.concepto] || t.concepto)}</td>
+                    <td>${TX_TYPE_BADGES[t.concepto] || escapeHtml(t.concepto)}</td>
                     <td>${escapeHtml(t.descripcion || '-')}</td>
                     <td>${periodText}</td>
                     <td>${escapeHtml(t.metodo || '-')}</td>
@@ -4347,4 +4452,629 @@ document.getElementById('user-form')?.addEventListener('submit', async (e) => {
         Swal.fire('Error', msg, 'error');
     }
 });
+
+// --- Ticket Template Editor ---
+
+const TICKET_EDITOR_VERSION = '2.6';
+
+const TICKET_PAPERS = {
+    '80':   { label: '80mm',              width: 384, lineWidth: 42 },
+    '80hi': { label: '80mm Alta densidad', width: 576, lineWidth: 64 },
+    '58':   { label: '58mm',              width: 280, lineWidth: 32 }
+};
+
+const TICKET_TYPE_LABELS = {
+    center: 'Centrado',
+    image: 'Imagen',
+    line: 'Línea izq/der',
+    separator: 'Separador',
+    items: 'Artículos',
+    feed: 'Salto de línea',
+    cut: 'Corte de papel',
+    barcode: 'Código de barras',
+    qr: 'Código QR'
+};
+
+const TICKET_TYPE_FIELDS = {
+    center:    [['text', 'Texto', 'text']],
+    image:     [['image', 'Ruta de la imagen (PNG)', 'text'], ['maxWidth', 'Ancho máximo (px)', 'number']],
+    line:      [['text', 'Texto (izq)', 'text'], ['right', 'Valor (der)', 'text'], ['gap', 'Espacio fijo (gap)', 'number']],
+    separator: [['text', 'Texto', 'text']],
+    items:     [['caption', 'Título de la tabla', 'text']],
+    feed:      [['lines', 'Líneas en blanco', 'number']],
+    cut:       [],
+    barcode:   [['text', 'Valor a codificar', 'text']],
+    qr:        [['text', 'Valor a codificar', 'text']]
+};
+
+const TICKET_PREVIEW_DATA = {
+    store_name: 'CERAMICA CAFE',
+    store_subtitle: 'Cafe con Esencia Artesanal',
+    store_phone: '0981 000 000',
+    store_ruc: '80000000-0',
+    ticket_num: '1234',
+    date: new Date().toLocaleString('es-PY'),
+    client_name: 'Juan Perez',
+    client_ruc: '1234567-8',
+    items: [
+        { name: 'Cafe Americano', qty: 2, price: 5000, total: 10000 },
+        { name: 'Medialuna', qty: 1, price: 4000, total: 4000 },
+        { name: 'Capuccino (Leche de almendras)', qty: 1, price: 12000, total: 12000 }
+    ],
+    subtotal: 26000,
+    iva_pct: 10,
+    iva_amount: 2600,
+    total: 28600,
+    method: 'Efectivo',
+    received: 30000,
+    change: 1400,
+    footer: 'Gracias Por Su Preferencia!'
+};
+
+let ticketTemplate = null;
+let ticketPreviewTimer = null;
+
+function escHtmlAttr(v) {
+    return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function ticketPaperIdFor(width, lineWidth) {
+    for (const id of Object.keys(TICKET_PAPERS)) {
+        const p = TICKET_PAPERS[id];
+        if (p.width === Number(width) && p.lineWidth === Number(lineWidth)) return id;
+    }
+    return null;
+}
+
+async function loadTicketSection() {
+    try {
+        const verEl = document.getElementById('ticket-version-label');
+        if (verEl) verEl.textContent = 'v' + TICKET_EDITOR_VERSION;
+        const res = await window.electronAPI.getTicketTemplate();
+        if (res && res.success && res.template) {
+            ticketTemplate = res.template;
+        } else {
+            ticketTemplate = null;
+        }
+    } catch (e) {
+        console.error('getTicketTemplate', e);
+        ticketTemplate = null;
+    }
+    renderTicketEditor();
+}
+
+function renderTicketEditor() {
+    if (!ticketTemplate || !Array.isArray(ticketTemplate.sections)) {
+        document.getElementById('ticket-sections-list').innerHTML =
+            '<div class="alert alert-warning mb-0">No se pudo cargar la plantilla.</div>';
+        return;
+    }
+    const width = Number(ticketTemplate.width) || 384;
+    const lineWidth = Number(ticketTemplate.line_width) || 42;
+    const paperId = ticketPaperIdFor(width, lineWidth);
+
+    const paperSelect = document.getElementById('ticket-paper-select');
+    paperSelect.value = paperId || '';
+    document.getElementById('ticket-width').value = width;
+    document.getElementById('ticket-line-width').value = lineWidth;
+    document.getElementById('ticket-paper-label').textContent =
+        paperId ? TICKET_PAPERS[paperId].label : `${width}px · ${lineWidth}c`;
+
+    renderTicketSectionsList();
+    updateTicketPreview();
+    initTicketImageDropzone();
+}
+
+function renderTicketSectionsList() {
+    const container = document.getElementById('ticket-sections-list');
+    if (!ticketTemplate) return;
+    try {
+    const cards = ticketTemplate.sections.map((s, idx) => {
+        const type = s.type || 'line';
+        let fieldsHtml = '';
+        (TICKET_TYPE_FIELDS[type] || []).forEach(([field, label, inputType]) => {
+            let value = s[field];
+            if (inputType === 'number' && value == null) value = field === 'lines' ? 1 : 0;
+            fieldsHtml += `
+                <div class="col-md-6">
+                    <label class="form-label">${label}</label>
+                    <input type="${inputType}" data-field="${field}" class="form-control form-control-sm" value="${escHtmlAttr(value)}"
+                        oninput="onTicketSectionInput(${idx}, '${field}')" ${inputType === 'number' ? 'min="0"' : ''}>
+                </div>`;
+        });
+        if (type === 'cut') {
+            fieldsHtml = '<div class="col-12"><span class="text-muted small">Comando de corte de papel (se emite al final del ticket).</span></div>';
+        }
+
+        const align = s.align || '';
+        const font = (s.font || 'B').toUpperCase() === 'A' ? 'A' : 'B';
+        const sizeW = Array.isArray(s.size) ? (Number(s.size[0]) || 1) : 1;
+        const sizeH = Array.isArray(s.size) ? (Number(s.size[1] || s.size[0]) || 1) : 1;
+
+        return `
+        <div class="ticket-section-card border rounded mb-2 p-2 bg-white" data-idx="${idx}">
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <span class="badge text-bg-primary">${idx + 1}</span>
+                <select class="form-select form-select-sm" style="width:150px;" onchange="onTicketSectionType(${idx}, this.value)">
+                    ${Object.keys(TICKET_TYPE_LABELS).map(t =>
+                        `<option value="${t}" ${t === type ? 'selected' : ''}>${TICKET_TYPE_LABELS[t]}</option>`).join('')}
+                </select>
+                <div class="ms-auto btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" title="Al inicio" ${idx === 0 ? 'disabled' : ''} onclick="moveTicketSectionToStart(${idx})"><i class="bi bi-chevron-up"></i><i class="bi bi-chevron-up"></i></button>
+                    <button class="btn btn-outline-secondary" title="Subir" ${idx === 0 ? 'disabled' : ''} onclick="moveTicketSection(${idx}, -1)"><i class="bi bi-arrow-up"></i></button>
+                    <button class="btn btn-outline-secondary" title="Bajar" ${idx === ticketTemplate.sections.length - 1 ? 'disabled' : ''} onclick="moveTicketSection(${idx}, 1)"><i class="bi bi-arrow-down"></i></button>
+                    <button class="btn btn-outline-secondary" title="Al final" ${idx === ticketTemplate.sections.length - 1 ? 'disabled' : ''} onclick="moveTicketSectionToEnd(${idx})"><i class="bi bi-chevron-down"></i><i class="bi bi-chevron-down"></i></button>
+                    <button class="btn btn-outline-secondary" title="Duplicar" onclick="duplicateTicketSection(${idx})"><i class="bi bi-copy"></i></button>
+                    <button class="btn btn-outline-danger" title="Eliminar" onclick="removeTicketSection(${idx})"><i class="bi bi-trash"></i></button>
+                </div>
+            </div>
+            <div class="row g-2">
+                ${fieldsHtml}
+            </div>
+            <div class="row g-2 mt-1 align-items-center">
+                <div class="col-md-2 col-6">
+                    <label class="form-label">Alineación</label>
+                    <select class="form-select form-select-sm" data-field="align" onchange="onTicketSectionInput(${idx}, 'align')">
+                        <option value="" ${align === '' ? 'selected' : ''}>Automática</option>
+                        <option value="left" ${align === 'left' ? 'selected' : ''}>Izquierda</option>
+                        <option value="center" ${align === 'center' ? 'selected' : ''}>Centro</option>
+                        <option value="right" ${align === 'right' ? 'selected' : ''}>Derecha</option>
+                    </select>
+                </div>
+                <div class="col-md-2 col-4">
+                    <label class="form-label">Fuente</label>
+                    <select class="form-select form-select-sm" data-field="font" onchange="onTicketSectionInput(${idx}, 'font')">
+                        <option value="B" ${font === 'B' ? 'selected' : ''}>A</option>
+                        <option value="A" ${font === 'A' ? 'selected' : ''}>B (angosta)</option>
+                    </select>
+                </div>
+                <div class="col-md-2 col-2">
+                    <label class="form-label">Negrita</label>
+                    <div class="form-check mt-1">
+                        <input class="form-check-input" type="checkbox" data-field="bold" ${s.bold ? 'checked' : ''} onchange="onTicketSectionInput(${idx}, 'bold')">
+                    </div>
+                </div>
+                <div class="col-md-2 col-6">
+                    <label class="form-label">Ancho (1-8)</label>
+                    <input type="number" class="form-control form-control-sm" data-field="sizeW" min="1" max="8" value="${sizeW}" oninput="onTicketSectionInput(${idx}, 'sizeW')">
+                </div>
+                <div class="col-md-2 col-6">
+                    <label class="form-label">Alto (1-8)</label>
+                    <input type="number" class="form-control form-control-sm" data-field="sizeH" min="1" max="8" value="${sizeH}" oninput="onTicketSectionInput(${idx}, 'sizeH')">
+                </div>
+            </div>
+            <div class="row g-2 mt-1">
+                <div class="col-md-6">
+                    <label class="form-label">Condición (if) <span class="text-muted fw-normal">ej: {{method}} == Efectivo</span></label>
+                    <input type="text" class="form-control form-control-sm" data-field="if" value="${escHtmlAttr(s.if || '')}" oninput="onTicketSectionInput(${idx}, 'if')">
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+
+    container.innerHTML = cards;
+    const counter = document.getElementById('ticket-sec-count');
+    if (counter) {
+        counter.textContent = ticketTemplate.sections.length + ' sección' + (ticketTemplate.sections.length === 1 ? '' : 'es');
+    }
+    } catch (e) {
+        console.error('renderTicketSectionsList', e);
+        if (container) {
+            container.innerHTML = '<div class="alert alert-danger mb-0">Error al renderizar secciones: ' + escHtmlAttr(e && e.message) + '</div>';
+        }
+    }
+}
+
+function onTicketSectionInput(idx, field) {
+    if (!ticketTemplate) return;
+    const sec = ticketTemplate.sections[idx];
+    if (!sec) return;
+    const cards = document.querySelectorAll('.ticket-section-card');
+    const card = cards[idx];
+    if (!card) { scheduleTicketPreview(); return; }
+
+    if (field === 'bold') {
+        sec.bold = card.querySelector('[data-field="bold"]').checked;
+    } else if (field === 'sizeW' || field === 'sizeH') {
+        const w = Math.max(1, parseInt(card.querySelector('[data-field="sizeW"]')?.value, 10) || 1);
+        const h = Math.max(1, parseInt(card.querySelector('[data-field="sizeH"]')?.value, 10) || 1);
+        sec.size = [w, h];
+    } else if (field === 'gap' || field === 'lines') {
+        const el = card.querySelector('[data-field="' + field + '"]');
+        const raw = el ? el.value : '';
+        sec[field] = raw === '' ? undefined : (parseInt(raw, 10) || 0);
+    } else {
+        const el = card.querySelector('[data-field="' + field + '"]');
+        if (!el) { scheduleTicketPreview(); return; }
+        if (field === 'align' || field === 'font') {
+            sec[field] = el.options[el.selectedIndex].value;
+        } else if (field === 'if') {
+            sec.if = el.value === '' ? undefined : el.value;
+        } else {
+            sec[field] = el.value;
+        }
+    }
+    scheduleTicketPreview();
+}
+
+function onTicketSectionType(idx, type) {
+    const sec = ticketTemplate.sections[idx];
+    if (!sec) return;
+    if (sec.type === type) return;
+    const newSec = { type };
+    TICKET_TYPE_FIELDS[type].forEach(([field]) => { if (sec[field] != null) newSec[field] = sec[field]; });
+    if (sec.bold) newSec.bold = true;
+    if (sec.align) newSec.align = sec.align;
+    if (sec.font) newSec.font = sec.font;
+    if (sec.size) newSec.size = sec.size;
+    if (sec.if) newSec.if = sec.if;
+    ticketTemplate.sections[idx] = newSec;
+    renderTicketSectionsList();
+    scheduleTicketPreview();
+}
+
+function addTicketSection() {
+    if (!ticketTemplate || !Array.isArray(ticketTemplate.sections)) {
+        Swal.fire('Error', 'La plantilla no está cargada. Volvé a entrar a la sección Ticket o reiniciá la app.', 'error');
+        return;
+    }
+    try {
+        ticketTemplate.sections.push({ type: 'line', text: '', right: '' });
+        renderTicketSectionsList();
+        focusTicketSectionCard(ticketTemplate.sections.length - 1);
+        scheduleTicketPreview();
+    } catch (e) {
+        console.error('addTicketSection', e);
+        Swal.fire('Error', 'No se pudo agregar la sección: ' + (e && e.message), 'error');
+    }
+}
+
+function addTicketImageSection(imageDataUrl) {
+    if (!ticketTemplate || !Array.isArray(ticketTemplate.sections)) {
+        Swal.fire('Error', 'La plantilla no está cargada.', 'error');
+        return;
+    }
+    try {
+        ticketTemplate.sections.push({
+            type: 'image',
+            image: imageDataUrl,
+            maxWidth: 300
+        });
+        renderTicketSectionsList();
+        focusTicketSectionCard(ticketTemplate.sections.length - 1);
+        scheduleTicketPreview();
+    } catch (e) {
+        console.error('addTicketImageSection', e);
+        Swal.fire('Error', 'No se pudo agregar la imagen: ' + (e && e.message), 'error');
+    }
+}
+
+function initTicketImageDropzone() {
+    const dropzone = document.getElementById('ticket-image-dropzone');
+    const fileInput = document.getElementById('ticket-image-file-input');
+
+    if (!dropzone || !fileInput) return;
+
+    dropzone.addEventListener('click', () => fileInput.click());
+
+    dropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.style.background = '#e7f3ff';
+        dropzone.style.borderColor = '#0d6efd';
+    });
+
+    dropzone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.style.background = '';
+        dropzone.style.borderColor = '#ccc';
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.style.background = '';
+        dropzone.style.borderColor = '#ccc';
+
+        const files = e.dataTransfer.files || [];
+        if (files.length > 0) {
+            processImageFile(files[0]);
+        }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        const files = e.target.files || [];
+        if (files.length > 0) {
+            processImageFile(files[0]);
+        }
+    });
+}
+
+function processImageFile(file) {
+    if (!file.type.startsWith('image/')) {
+        Swal.fire('Error', 'Por favor selecciona un archivo de imagen.', 'error');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const pngDataUrl = canvas.toDataURL('image/png');
+            uploadTicketImage(pngDataUrl);
+        };
+        img.onerror = () => {
+            Swal.fire('Error', 'No se pudo procesar la imagen.', 'error');
+        };
+        img.src = e.target.result;
+    };
+    reader.onerror = () => {
+        Swal.fire('Error', 'No se pudo leer el archivo de imagen.', 'error');
+    };
+    reader.readAsDataURL(file);
+}
+
+function uploadTicketImage(dataUrl) {
+    fetch('/api/ticket/upload-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success && data.path) {
+            addTicketImageSection(data.path);
+        } else {
+            Swal.fire('Error', 'No se pudo guardar la imagen: ' + (data.error || 'Error desconocido'), 'error');
+        }
+    })
+    .catch(err => {
+        Swal.fire('Error', 'Error al enviar la imagen: ' + err.message, 'error');
+    });
+}
+
+function focusTicketSectionCard(idx) {
+    requestAnimationFrame(() => {
+        const container = document.getElementById('ticket-sections-list');
+        const cards = document.querySelectorAll('.ticket-section-card');
+        const card = container && container.querySelector('.ticket-section-card[data-idx="' + idx + '"]');
+        console.log('[ticket] focusTicketSectionCard: idx=' + idx + ', container=' + !!container + ', totalCards=' + cards.length + ', cardEncontrada=' + !!card);
+        if (!card) {
+            console.warn('[ticket] focusTicketSectionCard: no se encontró la tarjeta idx=' + idx + ' — revisar renderTicketSectionsList');
+            return;
+        }
+        container.scrollTop = container.scrollHeight;
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const cBox = container.getBoundingClientRect();
+        const cardBox = card.getBoundingClientRect();
+        setTimeout(() => {
+            console.log('[ticket] scroll: contScrollTop=' + container.scrollTop +
+                ' contClientH=' + container.clientHeight +
+                ' contScrollH=' + container.scrollHeight +
+                ' cardVisibleEnPantalla=' + (cardBox.top >= cBox.top && cardBox.bottom <= cBox.bottom));
+        }, 350);
+        card.style.boxShadow = '0 0 0 3px rgba(255,193,7,.7)';
+        card.style.transition = 'box-shadow .4s ease';
+        setTimeout(() => {
+            card.style.boxShadow = '';
+            card.style.transition = '';
+        }, 1600);
+    });
+}
+
+function addTicketSectionTest() {
+    console.log('addTicketSectionTest: clic detectado, ticketTemplate cargado =', !!(ticketTemplate && Array.isArray(ticketTemplate.sections)));
+    Swal.fire({
+        title: 'Click OK',
+        text: 'El botón sí se ejecuta. Mirá si apareció la nueva sección debajo.',
+        icon: 'info',
+        timer: 2000,
+        showConfirmButton: false
+    });
+    addTicketSection();
+}
+
+function removeTicketSection(idx) {
+    ticketTemplate.sections.splice(idx, 1);
+    if (!ticketTemplate.sections.length) ticketTemplate.sections.push({ type: 'cut' });
+    renderTicketSectionsList();
+    scheduleTicketPreview();
+}
+
+function moveTicketSection(idx, dir) {
+    const i2 = idx + dir;
+    if (i2 < 0 || i2 >= ticketTemplate.sections.length) return;
+    const arr = ticketTemplate.sections;
+    const tmp = arr[idx];
+    arr[idx] = arr[i2];
+    arr[i2] = tmp;
+    renderTicketSectionsList();
+    scheduleTicketPreview();
+}
+
+function moveTicketSectionToStart(idx) {
+    if (idx <= 0) return;
+    const arr = ticketTemplate.sections;
+    const section = arr.splice(idx, 1)[0];
+    arr.unshift(section);
+    renderTicketSectionsList();
+    focusTicketSectionCard(0);
+    scheduleTicketPreview();
+}
+
+function moveTicketSectionToEnd(idx) {
+    if (idx >= ticketTemplate.sections.length - 1) return;
+    const arr = ticketTemplate.sections;
+    const section = arr.splice(idx, 1)[0];
+    arr.push(section);
+    renderTicketSectionsList();
+    focusTicketSectionCard(arr.length - 1);
+    scheduleTicketPreview();
+}
+
+function duplicateTicketSection(idx) {
+    const copy = JSON.parse(JSON.stringify(ticketTemplate.sections[idx]));
+    ticketTemplate.sections.splice(idx + 1, 0, copy);
+    renderTicketSectionsList();
+    focusTicketSectionCard(idx + 1);
+    scheduleTicketPreview();
+}
+
+function onTicketGlobalChange() {
+    const width = parseInt(document.getElementById('ticket-width').value, 10) || 384;
+    const lineWidth = parseInt(document.getElementById('ticket-line-width').value, 10) || 42;
+    ticketTemplate.width = Math.max(200, Math.min(832, width));
+    ticketTemplate.line_width = Math.max(20, Math.min(72, lineWidth));
+    const paperId = ticketPaperIdFor(ticketTemplate.width, ticketTemplate.line_width);
+    document.getElementById('ticket-paper-select').value = paperId || '';
+    document.getElementById('ticket-paper-label').textContent =
+        paperId ? TICKET_PAPERS[paperId].label : `${ticketTemplate.width}px · ${ticketTemplate.line_width}c`;
+    scheduleTicketPreview();
+}
+
+function onTicketPaperChange() {
+    const opt = document.getElementById('ticket-paper-select').selectedOptions[0];
+    if (!opt) return;
+    ticketTemplate.width = parseInt(opt.dataset.width, 10);
+    ticketTemplate.line_width = parseInt(opt.dataset.line, 10);
+    document.getElementById('ticket-width').value = ticketTemplate.width;
+    document.getElementById('ticket-line-width').value = ticketTemplate.line_width;
+    const paperId = ticketPaperIdFor(ticketTemplate.width, ticketTemplate.line_width);
+    document.getElementById('ticket-paper-label').textContent = paperId ? TICKET_PAPERS[paperId].label : '';
+    scheduleTicketPreview();
+}
+
+function scheduleTicketPreview() {
+    clearTimeout(ticketPreviewTimer);
+    ticketPreviewTimer = setTimeout(updateTicketPreview, 250);
+}
+
+async function resolveTicketImageSrc(imagePath) {
+    if (!imagePath) return null;
+    if (imagePath.startsWith('data:')) {
+        return imagePath;
+    }
+    try {
+        const r = await window.electronAPI.getTicketImage(imagePath);
+        if (r && r.success && r.base64) return 'data:image/png;base64,' + r.base64;
+    } catch (e) {
+        console.warn('getTicketImage', e);
+    }
+    return null;
+}
+
+async function updateTicketPreview() {
+    if (!ticketTemplate) return;
+    const textEl = document.getElementById('ticket-preview-text');
+    if (!textEl) return;
+    const width = Number(ticketTemplate.width) || 384;
+    const lineWidth = Number(ticketTemplate.line_width) || 42;
+    const scale = parseFloat(document.getElementById('ticket-preview-scale').value) || 1;
+    const paperEl = document.getElementById('ticket-paper');
+    const paperW = Math.max(140, Math.round(width * scale));
+    paperEl.style.width = paperW + 'px';
+    paperEl.style.minWidth = paperW + 'px';
+    // Modelo físico real: en ESC/POS una columna de la fuente estándar (B)
+    // mide 9 puntos del rollo. El papel representa `width` puntos; por eso el
+    // cuerpo del texto puede ocupar solo una fracción del ancho (ej: 42 columnas
+    // sobre un rollo de 576 puntos = 378/576 ≈ 66%), igual que en la impresión.
+    textEl.style.fontSize = Math.max(7, Math.round(9 * scale / 0.6 * 10) / 10) + 'px';
+
+    const maxCols = Math.max(Math.floor(width / 9), 1);
+    const fillPct = Math.round((Math.min(lineWidth, maxCols) / maxCols) * 100);
+    document.getElementById('ticket-paper-label').textContent =
+        `Rollo ${width}px · Uso ${fillPct}%`;
+
+    try {
+        const res = await window.electronAPI.previewTicket(ticketTemplate, TICKET_PREVIEW_DATA);
+        const text = (res && res.success && res.text) ? res.text : '';
+        textEl.textContent = '';
+        if (!text) {
+            textEl.textContent = '(error al renderizar preview)';
+            return;
+        }
+        const images = (ticketTemplate.sections || []).filter(s => s.type === 'image');
+        let imgIdx = 0;
+        const lines = text.split('\n');
+        lines.forEach((ln, i) => {
+            if (i > 0) textEl.appendChild(document.createTextNode('\n'));
+            const m = ln.match(/^\[\[IMG:(\d+)\]\]$/);
+            if (m) {
+                const sec = images[imgIdx++] || {};
+                const align = sec.align ? String(sec.align).trim().toLowerCase() : 'center';
+                const maxW = Math.max(1, Number(sec.maxWidth) || 0) || width;
+                const img = document.createElement('img');
+                img.alt = 'Imagen';
+                img.style.display = 'block';
+                img.style.width = Math.max(8, Math.round(maxW * scale)) + 'px';
+                if (align === 'right') img.style.marginLeft = 'auto';
+                else if (align === 'left') img.style.marginRight = 'auto';
+                else { img.style.marginLeft = 'auto'; img.style.marginRight = 'auto'; }
+                img.style.background = '#ececec';
+                textEl.appendChild(img);
+                resolveTicketImageSrc(sec.image).then(src => { if (src) img.src = src; });
+            } else {
+                textEl.appendChild(document.createTextNode(ln));
+            }
+        });
+    } catch (e) {
+        textEl.textContent = '(error al renderizar preview)';
+    }
+}
+
+function updateTicketPreviewScale() {
+    if (ticketTemplate) updateTicketPreview();
+}
+
+async function saveTicketTemplate() {
+    if (!ticketTemplate) return;
+    const res = await window.electronAPI.saveTicketTemplate(ticketTemplate);
+    if (res && res.success) {
+        Swal.fire({ title: 'Guardado', text: 'El nuevo formato de ticket se usará en las próximas impresiones.', icon: 'success', timer: 1600, showConfirmButton: false });
+    } else {
+        Swal.fire('Error', (res && res.error) || 'No se pudo guardar.', 'error');
+    }
+}
+
+async function resetTicketTemplate() {
+    const confirm = await Swal.fire({
+        title: '¿Restaurar formato?',
+        text: 'Se descartarán todos los cambios y se volverá al diseño original de fábrica.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Sí, restaurar',
+        cancelButtonText: 'Cancelar'
+    });
+    if (!confirm.isConfirmed) return;
+    const res = await window.electronAPI.resetTicketTemplate();
+    if (res && res.success && res.template) {
+        ticketTemplate = res.template;
+        renderTicketEditor();
+        Swal.fire({ title: 'Restaurado', text: 'Formato de fábrica restablecido.', icon: 'success', timer: 1400, showConfirmButton: false });
+    } else {
+        Swal.fire('Error', (res && res.error) || 'No se pudo restaurar.', 'error');
+    }
+}
+
+async function printTicketFromEditor() {
+    if (!ticketTemplate || !Array.isArray(ticketTemplate.sections)) return;
+    const ticketData = Object.assign({}, TICKET_PREVIEW_DATA, {
+        template: JSON.parse(JSON.stringify(ticketTemplate)),
+        lineWidth: Number(ticketTemplate.line_width) || 42
+    });
+    ticketData.date = new Date().toLocaleString('es-PY');
+    const res = await window.electronAPI.printTicket(ticketData);
+    if (res && res.success) {
+        const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, timerProgressBar: true });
+        Toast.fire({ icon: 'success', title: 'Ticket impreso' });
+    } else {
+        Swal.fire('Error', (res && res.error) || 'No se pudo imprimir el ticket.', 'error');
+    }
+}
 

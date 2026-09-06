@@ -747,8 +747,8 @@ async function processSaleTransaction(saleData) {
         const description = saleData.clientName || 'CLIENTE OCASIONAL';
 
         const insertMovementQuery = `
-            INSERT INTO movements (type, description, motive, user_name, payment_method, amount, details_json)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO movements (type, description, motive, user_name, payment_method, amount, details_json, voucher_number)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `;
 
         await client.query(insertMovementQuery, [
@@ -762,7 +762,8 @@ async function processSaleTransaction(saleData) {
                 items: saleData.items,
                 received: saleData.received,
                 change: saleData.change
-            })
+            }),
+            saleData.voucherNumber || null
         ]);
 
         await client.query('COMMIT');
@@ -1417,8 +1418,8 @@ async function closeTabAndProcessSale(tabId, paymentData) {
             (paymentData.observation ? ` - Obs: ${paymentData.observation}` : '') + ` - Mesa: ${tab.table_id ? tab.table_id : 'Sin mesa'}`;
 
         const insertMovementQuery = `
-            INSERT INTO movements (type, description, motive, user_name, payment_method, amount, details_json)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO movements (type, description, motive, user_name, payment_method, amount, details_json, voucher_number)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `;
 
         await client.query(insertMovementQuery, [
@@ -1433,7 +1434,8 @@ async function closeTabAndProcessSale(tabId, paymentData) {
                 received: paymentData.received,
                 change: paymentData.change,
                 tabId: tabId
-            })
+            }),
+            paymentData.voucherNumber || null
         ]);
 
         await client.query(

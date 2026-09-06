@@ -71,6 +71,7 @@ const exportsRouter = require('./src/routes/exports');
 const salariesRouter = require('./src/routes/salaries');
 const ticketTemplateRouter = require('./src/routes/ticketTemplate');
 const clockOffsetRouter = require('./src/routes/clockOffset');
+const printRouter = require('./src/routes/print');
 
 app.use('/api/auth', authRouter);
 app.use('/api/products', productsRouter);
@@ -85,6 +86,7 @@ app.use('/api/exports', exportsRouter);
 app.use('/api/salaries', salariesRouter);
 app.use('/api/ticket', ticketTemplateRouter);
 app.use('/api/clock-offset', clockOffsetRouter);
+app.use('/api/print', printRouter);
 
 app.get('/api/health', (req, res) => {
     res.json({ success: true, status: 'ok' });

@@ -4599,7 +4599,13 @@ async function loadTicketSection() {
     try {
         const verEl = document.getElementById('ticket-version-label');
         if (verEl) verEl.textContent = 'v' + TICKET_EDITOR_VERSION;
-        const res = await window.electronAPI.getTicketTemplate();
+        let res;
+        if (window.electronAPI && window.electronAPI.getTicketTemplate) {
+            res = await window.electronAPI.getTicketTemplate();
+        } else {
+            const response = await fetch('/api/ticket/template');
+            res = await response.json();
+        }
         if (res && res.success && res.template) {
             ticketTemplate = res.template;
         } else {
@@ -5098,7 +5104,17 @@ function updateTicketPreviewScale() {
 
 async function saveTicketTemplate() {
     if (!ticketTemplate) return;
-    const res = await window.electronAPI.saveTicketTemplate(ticketTemplate);
+    let res;
+    if (window.electronAPI && window.electronAPI.saveTicketTemplate) {
+        res = await window.electronAPI.saveTicketTemplate(ticketTemplate);
+    } else {
+        const response = await fetch('/api/ticket/template', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(ticketTemplate)
+        });
+        res = await response.json();
+    }
     if (res && res.success) {
         Swal.fire({ title: 'Guardado', text: 'El nuevo formato de ticket se usará en las próximas impresiones.', icon: 'success', timer: 1600, showConfirmButton: false });
     } else {
@@ -5116,7 +5132,13 @@ async function resetTicketTemplate() {
         cancelButtonText: 'Cancelar'
     });
     if (!confirm.isConfirmed) return;
-    const res = await window.electronAPI.resetTicketTemplate();
+    let res;
+    if (window.electronAPI && window.electronAPI.resetTicketTemplate) {
+        res = await window.electronAPI.resetTicketTemplate();
+    } else {
+        const response = await fetch('/api/ticket/template', { method: 'DELETE' });
+        res = await response.json();
+    }
     if (res && res.success && res.template) {
         ticketTemplate = res.template;
         renderTicketEditor();

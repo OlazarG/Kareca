@@ -301,7 +301,8 @@ function applyRolePermissions() {
         'nav-caja': perms.includes('gestionar_caja'),
         'nav-clients': perms.includes('gestionar_clientes'),
         'nav-salarios': perms.includes('gestionar_salarios'),
-        'nav-users': perms.includes('gestionar_usuarios')
+        'nav-users': perms.includes('gestionar_usuarios'),
+        'nav-ticket': perms.includes('editar_ticket_template')
     };
 
     // Toggle navigation links visibility
@@ -4524,6 +4525,23 @@ function ticketPaperIdFor(width, lineWidth) {
         if (p.width === Number(width) && p.lineWidth === Number(lineWidth)) return id;
     }
     return null;
+}
+
+async function showTicketEditorWithPermissionCheck() {
+    try {
+        const response = await fetch('/api/auth/check-permission?permission=editar_ticket_template');
+        const data = await response.json();
+
+        if (data.success && data.hasPermission) {
+            showSection('ticket');
+            loadTicketSection();
+        } else {
+            Swal.fire('Acceso Denegado', 'No tienes permiso para acceder al editor de tickets.', 'warning');
+        }
+    } catch (e) {
+        console.error('Error verificando permiso:', e);
+        Swal.fire('Error', 'No se pudo verificar los permisos.', 'error');
+    }
 }
 
 async function loadTicketSection() {

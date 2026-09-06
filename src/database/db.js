@@ -488,6 +488,19 @@ async function initDatabase() {
             ON CONFLICT DO NOTHING
         `);
 
+        // New permission: editar_ticket_template (idempotent for existing installations)
+        await client.query(`
+            INSERT INTO permissions (name, description)
+            VALUES ('editar_ticket_template', 'Acceso al editor de plantillas de tickets y configuración de impresión')
+            ON CONFLICT (name) DO NOTHING
+        `);
+        await client.query(`
+            INSERT INTO role_permissions (role_id, permission_id)
+            SELECT r.id, p.id FROM roles r, permissions p
+            WHERE r.name = 'Administrador' AND p.name = 'editar_ticket_template'
+            ON CONFLICT DO NOTHING
+        `);
+
         // Seed Admin User
         const checkUsers = await client.query('SELECT COUNT(*) FROM users');
         if (parseInt(checkUsers.rows[0].count) === 0) {
@@ -1760,7 +1773,7 @@ async function updateRolePermissions(roleId, permissionIds) {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        
+
         // Delete existing role permissions mapping
         await client.query('DELETE FROM role_permissions WHERE role_id = $1', [roleId]);
 
@@ -1782,6 +1795,22 @@ async function updateRolePermissions(roleId, permissionIds) {
         throw e;
     } finally {
         client.release();
+    }
+}
+
+async function checkUserPermission(userId, permissionName) {
+    try {
+        const res = await pool.query(`
+            SELECT COUNT(*) as count FROM role_permissions rp
+            JOIN permissions p ON rp.permission_id = p.id
+            JOIN users u ON u.role_id = rp.role_id
+            WHERE u.id = $1 AND p.name = $2
+        `, [userId, permissionName]);
+
+        return parseInt(res.rows[0].count) > 0;
+    } catch (e) {
+        console.error("Check User Permission Error", e);
+        return false;
     }
 }
 
@@ -2414,6 +2443,7 @@ module.exports = {
     getPermissions,
     getRolePermissions,
     updateRolePermissions,
+    checkUserPermission,
     authenticateUser,
     changePassword,
     changePasswordByUsername,

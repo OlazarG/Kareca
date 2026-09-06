@@ -63,6 +63,21 @@ router.get('/me', verifyToken, (req, res) => {
     return success(res, { user: req.user });
 });
 
+router.get('/check-permission', verifyToken, async (req, res) => {
+    try {
+        const permission = req.query.permission;
+        if (!permission) {
+            return error(res, 'Permiso no especificado', 400);
+        }
+
+        const result = await db.checkUserPermission(req.user.id, permission);
+        return success(res, { hasPermission: result });
+    } catch (err) {
+        console.error('Check permission error:', err);
+        return error(res, 'Error verificando permisos', 500);
+    }
+});
+
 router.post('/logout', (req, res) => {
     res.clearCookie(COOKIE_NAME, { path: '/' });
     return success(res, { message: 'Sesión cerrada' });

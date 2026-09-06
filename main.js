@@ -3,6 +3,10 @@ const path = require('path');
 const db = require('./src/database/db');
 const fs = require('fs');
 const bwipjs = require('bwip-js');
+const { PNG } = require('pngjs');
+const ticketTemplateStore = require('./src/services/ticketTemplateStore');
+const ticketTemplateRenderer = require('./src/services/ticketTemplateRenderer');
+const clockOffsetStore = require('./src/services/clockOffsetStore');
 
 // ... (Create Window Code) ...
 
@@ -298,6 +302,105 @@ ipcMain.handle('print-ticket', async (event, ticketData) => {
         console.error("Printing Failed:", error);
         return { success: false, error: error.message };
         // We return success: false but don't throw, allowing the app to continue
+    }
+});
+
+ipcMain.handle('get-ticket-template', async () => {
+    try {
+        const template = ticketTemplateStore.getTicketTemplate();
+        return { success: true, template };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('save-ticket-template', async (event, template) => {
+    try {
+        ticketTemplateStore.saveTicketTemplate(template);
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('reset-ticket-template', async () => {
+    try {
+        ticketTemplateStore.resetTicketTemplate();
+        const template = ticketTemplateStore.getTicketTemplate();
+        return { success: true, template };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('preview-ticket', async (event, template, data) => {
+    try {
+        const tpl = template || ticketTemplateStore.getTicketTemplate();
+        const text = ticketTemplateRenderer.renderText(tpl, data || {});
+        return { success: true, text };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('get-clock-offset', async () => {
+    try {
+        return { success: true, offsetMinutes: clockOffsetStore.getTimeOffsetMinutes() };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('save-clock-offset', async (event, minutes) => {
+    try {
+        clockOffsetStore.setTimeOffsetMinutes(minutes);
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('upload-ticket-image', async (event, dataUrl) => {
+    try {
+        if (!dataUrl || !dataUrl.startsWith('data:image/')) {
+            return { success: false, error: 'Data URL inválido' };
+        }
+        const parts = dataUrl.split(',');
+        if (parts.length < 2) {
+            return { success: false, error: 'Data URL malformado' };
+        }
+        const base64Data = parts[1];
+        let buffer;
+        try {
+            buffer = Buffer.from(base64Data, 'base64');
+        } catch (e) {
+            return { success: false, error: 'Error decodificando base64' };
+        }
+        const imagesDir = path.join(__dirname, 'src/services/images');
+        if (!fs.existsSync(imagesDir)) {
+            fs.mkdirSync(imagesDir, { recursive: true });
+        }
+        const filename = 'ticket_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9) + '.png';
+        const filepath = path.join(imagesDir, filename);
+        fs.writeFileSync(filepath, buffer);
+        return { success: true, path: filepath };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('get-ticket-image', async (event, imagePath) => {
+    try {
+        if (!imagePath) return { success: false, error: 'Falta la ruta de la imagen' };
+        const buffer = fs.readFileSync(imagePath);
+        try {
+            PNG.sync.read(buffer);
+        } catch (e) {
+            return { success: false, error: 'El archivo no es un PNG válido' };
+        }
+        return { success: true, base64: buffer.toString('base64'), format: 'png' };
+    } catch (error) {
+        return { success: false, error: error.message };
     }
 });
 

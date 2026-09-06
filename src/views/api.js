@@ -353,6 +353,32 @@ window.electronAPI = {
     // --- Print (QZ Tray) ---
     printTicket: async (ticketData) => {
         return await printReceipt(ticketData);
+    },
+
+    // --- Ticket Template Editor ---
+    getTicketTemplate: async () => {
+        return await api('GET', '/api/ticket/template');
+    },
+    saveTicketTemplate: async (template) => {
+        return await api('PUT', '/api/ticket/template', template);
+    },
+    resetTicketTemplate: async () => {
+        return await api('DELETE', '/api/ticket/template');
+    },
+    previewTicket: async (template, data) => {
+        return await api('POST', '/api/ticket/preview', { template, data });
+    },
+    getTicketImage: async (imagePath) => {
+        return await api('GET', '/api/ticket/image' + qs({ path: imagePath }));
+    },
+    uploadTicketImage: async (dataUrl) => {
+        return await api('POST', '/api/ticket/upload-image', { dataUrl });
+    },
+    getClockOffset: async () => {
+        return await api('GET', '/api/clock-offset');
+    },
+    saveClockOffset: async (offsetMinutes) => {
+        return await api('PUT', '/api/clock-offset', { offsetMinutes });
     }
 };
 

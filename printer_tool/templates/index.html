@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control de Impresora Térmica</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #f0f2f5;
+            color: #1a1a2e;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { font-size: 1.6rem; margin-bottom: 20px; color: #16213e; }
+        .card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .card h2 { font-size: 1.1rem; margin-bottom: 16px; color: #0f3460; }
+        .status-row { display: flex; align-items: center; gap: 8px; }
+        .dot {
+            width: 12px; height: 12px; border-radius: 50%;
+            display: inline-block;
+        }
+        .dot.on { background: #22c55e; }
+        .dot.off { background: #ef4444; }
+        .btn {
+            background: #2563eb;
+            color: #fff;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #1d4ed8; }
+        .btn.secondary { background: #64748b; }
+        .btn.secondary:hover { background: #475569; }
+        .btn:disabled { background: #94a3b8; cursor: not-allowed; }
+        .printer-list { margin-top: 12px; }
+        .printer-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            background: #f8fafc;
+        }
+        .printer-item .info { flex: 1; }
+        .printer-item .name { font-weight: 600; }
+        .printer-item .ids { font-size: 0.8rem; color: #64748b; }
+        label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 0.9rem; }
+        textarea, input[type="text"], select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            margin-bottom: 14px;
+            resize: vertical;
+        }
+        .row { display: flex; gap: 14px; flex-wrap: wrap; }
+        .row > div { flex: 1; min-width: 200px; }
+        #log {
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 0.8rem;
+            background: #0f172a;
+            color: #4ade80;
+            padding: 12px;
+            border-radius: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .success { color: #16a34a; font-weight: 600; }
+        .error { color: #dc2626; font-weight: 600; }
+        .msg { margin-top: 10px; font-size: 0.95rem; }
+
+        /* Plantillas / editor */
+        .template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+        .template-card {
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 14px;
+            cursor: pointer;
+            transition: all 0.15s;
+            background: #f8fafc;
+        }
+        .template-card:hover { border-color: #2563eb; }
+        .template-card.active { border-color: #2563eb; background: #eff6ff; }
+        .template-card .t-name { font-weight: 700; color: #16213e; margin-bottom: 4px; }
+        .template-card .t-desc { font-size: 0.8rem; color: #64748b; }
+        .template-card .t-badge {
+            display: inline-block; font-size: 0.7rem; padding: 2px 8px;
+            border-radius: 999px; margin-top: 8px;
+        }
+        .badge-custom { background: #dbeafe; color: #1d4ed8; }
+        .badge-std { background: #e2e8f0; color: #475569; }
+        .tabs { display: flex; gap: 6px; border-bottom: 2px solid #e2e8f0; margin-bottom: 16px; }
+        .tab {
+            padding: 8px 16px; cursor: pointer; border: none; background: none;
+            font-size: 0.95rem; font-weight: 600; color: #64748b;
+            border-bottom: 3px solid transparent; margin-bottom: -2px;
+        }
+        .tab.active { color: #2563eb; border-bottom-color: #2563eb; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .section-editor { border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px; padding: 10px; background: #fff; }
+        .section-editor .sec-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+        .section-editor select, .section-editor input[type="text"] { width: auto; margin-bottom: 0; padding: 6px 8px; flex: 1; min-width: 120px; }
+        .section-editor .sec-remove { background: #ef4444; color: #fff; border: none; border-radius: 6px; width: 30px; height: 30px; cursor: pointer; font-size: 1rem; }
+        .section-editor .sec-move { background: #e2e8f0; color: #475569; border: none; border-radius: 6px; width: 30px; height: 30px; cursor: pointer; font-size: 1rem; }
+        .sections-list { max-height: 400px; overflow-y: auto; padding-right: 4px; }
+        .placeholder-hint { font-size: 0.8rem; color: #64748b; background: #f1f5f9; padding: 8px; border-radius: 6px; margin-bottom: 10px; word-break: break-word; }
+        .preview-ticket {
+            font-family: 'Consolas','Courier New',monospace; font-size: 0.85rem;
+            background: #fff; border: 1px dashed #cbd5e1; padding: 12px;
+            border-radius: 8px; white-space: pre-wrap; min-height: 200px;
+        }
+        .small-input { width: 80px !important; display: inline-block; }
+        .check { margin-right: 6px; }
+        .add-sec-btn { background: #f1f5f9; border: 2px dashed #cbd5e1; color: #475569; border-radius: 8px; padding: 10px; width: 100%; cursor: pointer; font-weight: 600; }
+        .add-sec-btn:hover { border-color: #2563eb; color: #2563eb; }
+        .money-row { display: flex; gap: 10px; flex-wrap: wrap; }
+        .money-row > div { flex: 1; min-width: 120px; }
+        .data-row { border-bottom: 1px solid #f1f5f9; padding: 8px 0; }
+        .data-row:last-child { border-bottom: none; }
+        .data-row .dr-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+        .data-row .dr-head strong { font-size: 0.9rem; }
+        .del-item { background: #ef4444; color: #fff; border: none; border-radius: 6px; width: 26px; height: 26px; cursor: pointer; }
+        .add-item-btn { background: #f1f5f9; border: 2px dashed #cbd5e1; color: #475569; border-radius: 8px; padding: 8px; width: 100%; cursor: pointer; font-weight: 600; margin-top: 6px; }
+        .add-item-btn:hover { border-color: #2563eb; color: #2563eb; }
+        .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+        .seg { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; }
+        .seg button { border: none; background: #fff; padding: 8px 14px; cursor: pointer; font-weight: 600; color: #475569; }
+        .seg button.active { background: #2563eb; color: #fff; }
+        .segmary { font-size: 0.75rem; color: #94a3b8; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖨️ Control de Impresora Térmica</h1>
+
+        <div class="card">
+            <h2>Estado del servidor</h2>
+            <div class="status-row">
+                <span class="dot off" id="serverDot"></span>
+                <span id="statusText">Consultando estado...</span>
+                <button class="btn secondary" onclick="refreshStatus()">Actualizar</button>
+            </div>
+            <p class="msg" id="statusMsg"></p>
+        </div>
+
+        <div class="card">
+            <h2>Impresoras detectadas</h2>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+                <button class="btn" onclick="listPrinters()">🔍 Buscar impresoras</button>
+                <button class="btn secondary" onclick="connectDefault()">⚡ Conectar impresora por defecto</button>
+            </div>
+            <div class="printer-list" id="printerList"></div>
+            <div class="msg" id="printersMsg"></div>
+        </div>
+
+        <div class="card">
+            <h2>Imprimir texto</h2>
+            <label for="text">Texto a imprimir:</label>
+            <textarea id="text" rows="6" placeholder="Escribe el texto del ticket aquí..."></textarea>
+            <button class="btn" onclick="printText()">🖨️ Imprimir texto</button>
+            <div class="msg" id="printMsg"></div>
+        </div>
+
+        <div class="card">
+            <h2>Imprimir logo / imagen</h2>
+            <div class="row">
+                <div>
+                    <label for="image">Imagen (PNG/JPG):</label>
+                    <input type="file" id="image" accept=".png,.jpg,.jpeg">
+                </div>
+                <div>
+                    <label for="width">Ancho (píxeles):</label>
+                    <select id="width">
+                        <option value="384">384 (80mm)</option>
+                        <option value="280">280 (58mm)</option>
+                    </select>
+                </div>
+            </div>
+            <button class="btn" onclick="printImage()">🖼️ Imprimir imagen</button>
+            <div class="msg" id="imageMsg"></div>
+        </div>
+
+        <div class="card">
+            <h2>📋 Plantillas de Tickets</h2>
+            <div class="tabs">
+                <button class="tab active" data-tab="tab-select" onclick="switchTab('tab-select')">Seleccionar / Imprimir</button>
+                <button class="tab" data-tab="tab-edit" onclick="switchTab('tab-edit')">Editar plantilla</button>
+            </div>
+
+            <!-- Pestaña: seleccionar e imprimir -->
+            <div id="tab-select" class="tab-panel active">
+                <div class="toolbar">
+                    <button class="btn" onclick="loadTemplates()">⟳ Cargar plantillas</button>
+                    <div class="seg" id="widthSeg">
+                        <button data-w="384" class="active" onclick="setTicketWidth(384,this)">80mm</button>
+                        <button data-w="280" onclick="setTicketWidth(280,this)">58mm</button>
+                    </div>
+                </div>
+                <div class="template-grid" id="templateGrid"></div>
+
+                <h3 style="margin:18px 0 12px;">Datos del ticket</h3>
+                <div class="row">
+                    <div><label>Negocio</label><input type="text" id="d_store_name" placeholder="Mi Negocio"></div>
+                    <div><label>Subtítulo</label><input type="text" id="d_store_subtitle" placeholder="Ventas..."></div>
+                </div>
+                <div class="row">
+                    <div><label>Teléfono / WhatsApp</label><input type="text" id="d_store_phone"></div>
+                    <div><label>RUC</label><input type="text" id="d_store_ruc"></div>
+                </div>
+                <div class="row">
+                    <div><label>Nº ticket</label><input type="text" id="d_ticket_num" value="1"></div>
+                    <div><label>Nº mesa</label><input type="text" id="d_table"></div>
+                    <div><label>Cliente</label><input type="text" id="d_client_name"></div>
+                </div>
+                <div class="row">
+                    <div><label>Pie / footer</label><input type="text" id="d_footer" value="Gracias Por Su Preferencia!"></div>
+                    <div><label>Nota</label><input type="text" id="d_note"></div>
+                </div>
+                <div class="row">
+                    <div><label>Código de barras</label><input type="text" id="d_barcode" placeholder="ej. P0201012"></div>
+                    <div><label>Datos QR</label><input type="text" id="d_qr_data" placeholder="URL o texto del QR"></div>
+                </div>
+                <div class="row">
+                    <div><label>Forma de pago</label>
+                        <select id="d_method"><option value="Efectivo">Efectivo</option><option value="Tarjeta">Tarjeta</option><option value="Transferencia">Transferencia</option><option value="">Otro</option></select>
+                    </div>
+                    <div><label>Recibido</label><input type="number" id="d_received" value="0"></div>
+                </div>
+                <div class="money-row" style="margin-top:14px;">
+                    <div><label>Subtotal</label><input type="number" id="d_subtotal" value="0"></div>
+                    <div><label>IVA %</label><input type="number" id="d_iva_pct" value="10"></div>
+                    <div><label>IVA monto</label><input type="number" id="d_iva_amount" value="0"></div>
+                    <div><label>Total</label><input type="number" id="d_total" value="0"></div>
+                </div>
+
+                <h3 style="margin:18px 0 8px;">Artículos</h3>
+                <div id="itemsEditor"></div>
+                <button class="add-item-btn" onclick="addItem()">+ Agregar artículo</button>
+
+                <div style="display:flex; gap:10px; margin-top:18px; flex-wrap:wrap;">
+                    <button class="btn" onclick="printTicket()">🖨️ Imprimir ticket (USB)</button>
+                    <button class="btn secondary" onclick="printTicketBrowser()">🖨️ Imprimir por Navegador (80mm)</button>
+                    <button class="btn secondary" onclick="previewTicket()">👁 Vista previa</button>
+                    <button class="btn secondary" onclick="resetTicketForm()">Limpiar</button>
+                </div>
+                <div class="msg" id="ticketMsg"></div>
+
+                <h3 style="margin:18px 0 8px;">Vista previa</h3>
+                <div class="preview-ticket" id="ticketPreview">Selecciona una plantilla y completa los datos para previsualizar.</div>
+            </div>
+
+            <!-- Pestaña: editor de plantillas -->
+            <div id="tab-edit" class="tab-panel">
+                <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
+                    <label style="margin:0;">Plantilla a editar:</label>
+                    <select id="editKey" style="width:auto; flex:1; min-width:150px;" onchange="openEditor()"></select>
+                    <button class="btn secondary" onclick="resetEditing()">↺ Restaurar estándar</button>
+                </div>
+                <div class="placeholder-hint">
+                    <b>Placeholders disponibles:</b>
+                    store_name, store_subtitle, store_phone, store_ruc, ticket_num, date, table,
+                    client_name, client_ruc, subtotal, total, iva_amount, iva_pct, received, change,
+                    method, note, footer, amount, amount_words, concept, dashes. Secciones: center, line,
+                    items, separator, feed, cut. Los <b>articles</b> se agregan automáticamente por la sección "items".
+                </div>
+                <div class="row" style="margin-bottom:12px;">
+                    <div><label>Ancho de línea (caracteres)</label><input type="number" id="edit_line_width" min="24" max="64"></div>
+                    <div><label>Nombre de plantilla</label><input type="text" id="edit_name"></div>
+                </div>
+                <div class="sections-list" id="sectionsEditor"></div>
+                <button class="add-sec-btn" onclick="addSection()">+ Agregar sección</button>
+                <div style="display:flex; gap:10px; margin-top:16px; flex-wrap:wrap;">
+                    <button class="btn" onclick="saveEditing()">💾 Guardar plantilla</button>
+                    <button class="btn secondary" onclick="previewEditing()">👁 Vista previa</button>
+                </div>
+                <div class="msg" id="editMsg"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Registro de actividad</h2>
+            <div id="log"></div>
+        </div>
+    </div>
+
+    <script>
+        const logEl = document.getElementById('log');
+        const STATUS_MSG = document.getElementById('statusMsg');
+
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            logEl.textContent += `[${time}] ${msg}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function showMsg(el, text, isError = false) {
+            el.className = 'msg ' + (isError ? 'error' : 'success');
+            el.textContent = text;
+        }
+
+        function setConnected(connected) {
+            const dot = document.getElementById('serverDot');
+            dot.className = 'dot ' + (connected ? 'on' : 'off');
+            const text = document.getElementById('statusText');
+            text.textContent = connected ? 'Impresora conectada' : 'Sin impresora conectada (backend disponible)';
+        }
+
+        async function api(url, options = {}) {
+            const res = await fetch(url, options);
+            const data = await res.json().catch(() => ({}));
+            return { ok: res.ok, data };
+        }
+
+        async function refreshStatus() {
+            const { ok, data } = await api('/api/status');
+            if (ok) {
+                setConnected(data.printer_connected);
+                showMsg(STATUS_MSG, 'Servidor en línea.');
+                log('Estado consultado: ' + (data.printer_connected ? 'impresora conectada' : 'sin impresora'));
+            } else {
+                showMsg(STATUS_MSG, 'No se pudo contactar el servidor', true);
+                log('Error consultando estado');
+            }
+        }
+
+        async function listPrinters() {
+            const box = document.getElementById('printerList');
+            const msg = document.getElementById('printersMsg');
+            box.innerHTML = '<p>Cargando...</p>';
+            const { ok, data } = await api('/api/printers');
+            if (!ok) {
+                box.innerHTML = '';
+                showMsg(msg, 'No se pudieron listar impresoras: ' + (data.message || 'error'), true);
+                log('Error listando impresoras: ' + (data.message || ''));
+                return;
+            }
+            if (data.count === 0) {
+                box.innerHTML = '<p style="color:#64748b">No se detectaron impresoras USB.</p>';
+                log('Búsqueda completada: 0 impresoras');
+                showMsg(msg, 'No se detectaron impresoras USB.');
+                return;
+            }
+            box.innerHTML = '';
+            data.printers.forEach(p => {
+                const item = document.createElement('div');
+                item.className = 'printer-item';
+                item.innerHTML = `
+                    <div class="info">
+                        <div class="name">${p.product}</div>
+                        <div class="ids">${p.manufacturer} · VID ${p.vendor_id} · PID ${p.product_id}</div>
+                    </div>
+                    <button class="btn" onclick="connect('${p.vendor_id}','${p.product_id}')">Conectar</button>
+                `;
+                box.appendChild(item);
+            });
+            log(`Búsqueda completada: ${data.count} impresoras`);
+        }
+
+        async function connectDefault() {
+            const { ok, data } = await api('/api/connect/default', { method: 'POST' });
+            if (ok) {
+                setConnected(true);
+                log('Conectado a impresora por defecto');
+                showMsg(STATUS_MSG, 'Impresora conectada');
+            } else {
+                log('Error conectando impresora por defecto: ' + data.message);
+                showMsg(STATUS_MSG, 'Error: ' + data.message, true);
+            }
+        }
+
+        async function connect(vid, pid) {
+            const { ok, data } = await api('/api/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ vendor_id: vid, product_id: pid })
+            });
+            if (ok) {
+                setConnected(true);
+                log(`Conectado a ${vid}:${pid}`);
+                showMsg(STATUS_MSG, 'Impresora conectada');
+            } else {
+                log(`Error conectando a ${vid}:${pid}: ${data.message}`);
+                showMsg(STATUS_MSG, 'Error: ' + data.message, true);
+            }
+        }
+
+        async function printText() {
+            const text = document.getElementById('text').value;
+            const msg = document.getElementById('printMsg');
+            if (!text.trim()) { showMsg(msg, 'Escribe un texto primero', true); return; }
+            const { ok, data } = await api('/api/print', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            showMsg(msg, ok ? 'Texto impreso ✔' : 'Error: ' + data.message, !ok);
+            log((ok ? 'Texto impreso' : 'Error al imprimir: ' + data.message));
+        }
+
+        async function printImage() {
+            const fileInput = document.getElementById('image');
+            const width = document.getElementById('width').value;
+            const msg = document.getElementById('imageMsg');
+            if (!fileInput.files[0]) { showMsg(msg, 'Selecciona una imagen', true); return; }
+            const fd = new FormData();
+            fd.append('file', fileInput.files[0]);
+            fd.append('width', width);
+            const { ok, data } = await api('/api/print-image', { method: 'POST', body: fd });
+            showMsg(msg, ok ? 'Imagen impresa ✔' : 'Error: ' + data.message, !ok);
+            log((ok ? 'Imagen impresa' : 'Error al imprimir imagen: ' + data.message));
+        }
+
+        // ------------------------------------------------------------------
+        // Plantillas de tickets
+        // ------------------------------------------------------------------
+        let TEMPLATES = {};
+        let CURRENT_KEY = 'ticket_venta';
+        let TICKET_WIDTH = 384;
+
+        function switchTab(name) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === name));
+        }
+
+        function setTicketWidth(w, btn) {
+            TICKET_WIDTH = w;
+            document.querySelectorAll('#widthSeg button').forEach(b => b.classList.toggle('active', b.dataset.w == w));
+        }
+
+        async function loadTemplates() {
+            const { ok, data } = await api('/api/templates');
+            if (!ok) { log('Error cargando plantillas'); return; }
+            TEMPLATES = data.templates || {};
+            renderTemplateGrid();
+            populateEditSelect();
+            log('Plantillas cargadas: ' + Object.keys(TEMPLATES).length);
+        }
+
+        function renderTemplateGrid() {
+            const g = document.getElementById('templateGrid');
+            g.innerHTML = '';
+            Object.entries(TEMPLATES).forEach(([key, t]) => {
+                const div = document.createElement('div');
+                div.className = 'template-card' + (key === CURRENT_KEY ? ' active' : '');
+                div.innerHTML = `
+                    <div class="t-name">${t.name || key}</div>
+                    <div class="t-desc">${t.description || ''}</div>
+                    <div><span class="t-badge ${t.custom ? 'badge-custom' : 'badge-std'}">${t.custom ? 'Personalizada' : 'Estándar'}</span></div>
+                    <div class="segmary">${(t.template.sections || []).map(s => s.type).join(' · ') || ''}</div>
+                `;
+                div.onclick = () => { selectTemplate(key); };
+                g.appendChild(div);
+            });
+        }
+
+        function selectTemplate(key) {
+            CURRENT_KEY = key;
+            renderTemplateGrid();
+            log('Plantilla seleccionada: ' + key);
+        }
+
+        function populateEditSelect() {
+            const sel = document.getElementById('editKey');
+            sel.innerHTML = '';
+            Object.entries(TEMPLATES).forEach(([key, t]) => {
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.textContent = t.name + ' (' + key + ')';
+                sel.appendChild(opt);
+            });
+            if (CURRENT_KEY && TEMPLATES[CURRENT_KEY]) sel.value = CURRENT_KEY;
+        }
+
+        function currentTemplate() {
+            return (TEMPLATES[CURRENT_KEY] || {}).template || null;
+        }
+
+        // --- Formulario de datos ---
+        function collectTicketData() {
+            const num = (v) => parseFloat(v) || 0;
+            const items = [];
+            document.querySelectorAll('.data-row').forEach(row => {
+                items.push({
+                    name: row.querySelector('.it-name').value,
+                    qty: parseFloat(row.querySelector('.it-qty').value) || 1,
+                    price: parseFloat(row.querySelector('.it-price').value) || 0
+                });
+            });
+            return {
+                store_name: document.getElementById('d_store_name').value,
+                store_subtitle: document.getElementById('d_store_subtitle').value,
+                store_phone: document.getElementById('d_store_phone').value,
+                store_ruc: document.getElementById('d_store_ruc').value,
+                ticket_num: document.getElementById('d_ticket_num').value,
+                table: document.getElementById('d_table').value,
+                client_name: document.getElementById('d_client_name').value,
+                footer: document.getElementById('d_footer').value,
+                note: document.getElementById('d_note').value,
+                barcode: document.getElementById('d_barcode').value,
+                qr_data: document.getElementById('d_qr_data').value,
+                method: document.getElementById('d_method').value,
+                received: num(document.getElementById('d_received').value),
+                subtotal: num(document.getElementById('d_subtotal').value),
+                iva_amount: num(document.getElementById('d_iva_amount').value),
+                iva_pct: document.getElementById('d_iva_pct').value,
+                total: num(document.getElementById('d_total').value),
+                items
+            };
+        }
+
+        let itemCount = 0;
+        function addItem(name = '', qty = 1, price = 0) {
+            const wrap = document.createElement('div');
+            wrap.className = 'data-row';
+            wrap.innerHTML = `
+                <div class="dr-head">
+                    <strong>Artículo ${++itemCount}</strong>
+                    <button class="del-item" onclick="this.closest('.data-row').remove()">✕</button>
+                </div>
+                <div class="row">
+                    <div style="flex:2"><input type="text" class="it-name" value="${name}" placeholder="Descripción"></div>
+                    <div style="flex:0 0 70px"><input type="number" class="it-qty" value="${qty}" placeholder="Cant"></div>
+                    <div style="flex:0 0 100px"><input type="number" class="it-price" value="${price}" placeholder="Precio"></div>
+                </div>
+            `;
+            document.getElementById('itemsEditor').appendChild(wrap);
+        }
+
+        function resetTicketForm() {
+            document.getElementById('d_store_name').value = '';
+            document.getElementById('d_store_subtitle').value = '';
+            document.getElementById('d_store_phone').value = '';
+            document.getElementById('d_store_ruc').value = '';
+            document.getElementById('d_ticket_num').value = '1';
+            document.getElementById('d_table').value = '';
+            document.getElementById('d_client_name').value = '';
+            document.getElementById('d_footer').value = 'Gracias Por Su Preferencia!';
+            document.getElementById('d_note').value = '';
+            document.getElementById('d_barcode').value = '';
+            document.getElementById('d_qr_data').value = '';
+            document.getElementById('d_received').value = '0';
+            document.getElementById('d_subtotal').value = '0';
+            document.getElementById('d_iva_amount').value = '0';
+            document.getElementById('d_iva_pct').value = '10';
+            document.getElementById('d_total').value = '0';
+            document.getElementById('itemsEditor').innerHTML = '';
+            itemCount = 0;
+            addItem();
+            log('Formulario de ticket limpiado');
+        }
+
+        function computeTotals() {
+            let sub = 0;
+            document.querySelectorAll('.data-row').forEach(row => {
+                const q = parseFloat(row.querySelector('.it-qty').value) || 0;
+                const p = parseFloat(row.querySelector('.it-price').value) || 0;
+                sub += q * p;
+            });
+            const ivaPct = parseFloat(document.getElementById('d_iva_pct').value) || 0;
+            const iva = sub * ivaPct / 100;
+            document.getElementById('d_subtotal').value = sub;
+            document.getElementById('d_iva_amount').value = iva;
+            document.getElementById('d_total').value = sub + iva;
+        }
+
+        // --- Impresión y vista previa ---
+        async function printTicket() {
+            computeTotals();
+            const tpl = currentTemplate();
+            if (!tpl) { showMsg(document.getElementById('ticketMsg'), 'Selecciona una plantilla válida', true); return; }
+            const payload = {
+                template: CURRENT_KEY,
+                line_width: tpl.line_width,
+                data: collectTicketData()
+            };
+            const { ok, data } = await api('/api/print/ticket', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            });
+            const msg = document.getElementById('ticketMsg');
+            showMsg(msg, ok ? 'Ticket impreso ✔' : 'Error: ' + data.message, !ok);
+            log((ok ? 'Ticket impreso' : 'Error ticket: ' + data.message));
+        }
+
+        // Impresión por navegador (HTML 80mm) - abre ventana para Ctrl+P
+        function collectTicketHTMLData() {
+            computeTotals();
+            const d = collectTicketData();
+            const now = new Date();
+            const dia = String(now.getDate()).padStart(2, '0');
+            const mes = String(now.getMonth() + 1).padStart(2, '0');
+            const anio = String(now.getFullYear());
+            const hr = String(now.getHours()).padStart(2, '0');
+            const mi = String(now.getMinutes()).padStart(2, '0');
+            return {
+                store_name: d.store_name || 'CERÁMICA CAFÉ',
+                store_subtitle: d.store_subtitle,
+                store_address: d.store_phone,
+                barcode: d.barcode,
+                ticket_num: d.ticket_num,
+                date: d.date || (dia + '-' + mes + '-' + anio.slice(2) + '  ' + hr + ':' + mi),
+                items: d.items,
+                subtotal: d.subtotal,
+                iva_pct: d.iva_pct,
+                iva_amount: d.iva_amount,
+                total: d.total,
+                method: d.method,
+                received: d.received,
+                change: d.change,
+                footer: d.footer,
+                qr_url: (d.qr_data || '').indexOf('http') === 0
+                    ? 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent(d.qr_data)
+                    : '',
+                paper_width: TICKET_WIDTH === 280 ? 58 : 80,
+                body_width: TICKET_WIDTH === 280 ? 50 : 72
+            };
+        }
+
+        async function printTicketBrowser() {
+            if (!currentTemplate()) { showMsg(document.getElementById('ticketMsg'), 'Selecciona una plantilla válida', true); return; }
+            const data = collectTicketHTMLData();
+            const { ok, data: resp } = await api('/api/tickets/html', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data })
+            });
+            const msg = document.getElementById('ticketMsg');
+            if (!ok) { showMsg(msg, 'Error generando HTML: ' + (resp || 'error'), true); return; }
+            // Abrir nueva ventana y abrir diálogo de impresión
+            const win = window.open('', '_blank');
+            if (!win) {
+                showMsg(msg, 'Permite ventanas emergentes para imprimir por navegador', true);
+                return;
+            }
+            win.document.write(resp);
+            win.document.close();
+            setTimeout(() => { try { win.focus(); win.print(); } catch (e) { /* ignorar */ } }, 300);
+            showMsg(msg, 'Ventana de impresión abierta (Ctrl+P) ✔', false);
+            log('Ticket HTML enviado al navegador');
+        }
+
+        async function previewTicket() {
+            computeTotals();
+            const tpl = currentTemplate();
+            if (!tpl) { showMsg(document.getElementById('ticketMsg'), 'Selecciona una plantilla válida', true); return; }
+            const payload = {
+                template: CURRENT_KEY,
+                line_width: tpl.line_width,
+                data: collectTicketData()
+            };
+            const { ok, data } = await api('/api/tickets/preview', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            });
+            const pv = document.getElementById('ticketPreview');
+            if (ok) {
+                pv.textContent = data.text || '';
+                log('Vista previa de ticket generada');
+            } else {
+                pv.textContent = 'Error en vista previa: ' + (data.message || '');
+                log('Error vista previa: ' + data.message);
+            }
+        }
+
+        // --- Editor de plantillas ---
+        function openEditor() {
+            const key = document.getElementById('editKey').value;
+            const tpl = (TEMPLATES[key] || {}).template;
+            if (!tpl) return;
+            CURRENT_KEY = key;
+            renderTemplateGrid();
+            document.getElementById('edit_line_width').value = tpl.line_width || 42;
+            document.getElementById('edit_name').value = tpl.name || key;
+            renderSectionsEditor(tpl.sections || []);
+        }
+
+        function renderSectionsEditor(sections) {
+            const box = document.getElementById('sectionsEditor');
+            box.innerHTML = '';
+            sections.forEach((sec, i) => {
+                const div = document.createElement('div');
+                div.className = 'section-editor';
+                div.dataset.index = i;
+                div.innerHTML = `
+                    <div class="sec-row">
+                        <select class="sec-type" onchange="updateSectionRow(this)">
+                            ${['center','line','separator','items','feed','cut','barcode','qr'].map(t =>
+                                `<option value="${t}" ${sec.type === t ? 'selected' : ''}>${t}</option>`).join('')}
+                        </select>
+                        <input type="text" class="sec-text" value="${(sec.text || '').replace(/"/g, '&quot;')}" placeholder="texto / placeholder" style="${['center','line','separator','items','barcode','qr'].includes(sec.type) ? '' : 'display:none'}">
+                        <input type="text" class="sec-right" value="${(sec.right || '').replace(/"/g, '&quot;')}" placeholder="derecha (line)" style="${sec.type === 'line' ? '' : 'display:none'}">
+                        <select class="sec-size" onchange="updateSectionRow(this)" style="${sec.type === 'center' ? '' : 'display:none'}">
+                            <option value="1,1" ${sec.size === undefined || (sec.size && sec.size[0]==1 && sec.size[1]==1) ? 'selected' : ''}>Normal</option>
+                            <option value="2,2" ${sec.size && sec.size[0]==2 ? 'selected' : ''}>Doble</option>
+                            <option value="1,2" ${sec.size && sec.size[0]==1 && sec.size[1]==2 ? 'selected' : ''}>Alto</option>
+                            <option value="2,1" ${sec.size && sec.size[0]==2 && sec.size[1]==1 ? 'selected' : ''}>Ancho</option>
+                        </select>
+                        <input type="number" class="sec-lines" value="${sec.lines || 1}" placeholder="nº" style="${sec.type === 'feed' ? 'width:60px;display:inline-block' : 'display:none'}">
+                        <div class="sec-row" style="margin-left:auto;">
+                            <label class="check" style="font-weight:400; margin:0; display:none;" id="boldWrap${i}">
+                                <input type="checkbox" class="sec-bold" ${sec.bold ? 'checked' : ''}> Negrita
+                            </label>
+                            <button class="sec-move" onclick="moveSection(this, -1)">↑</button>
+                            <button class="sec-move" onclick="moveSection(this, 1)">↓</button>
+                            <button class="sec-remove" onclick="removeSection(this)">✕</button>
+                        </div>
+                    </div>
+                `;
+                // Mostrar negrita solo para center/line
+                const bw = div.querySelector('#boldWrap' + i);
+                if (['center','line'].includes(sec.type)) bw.style.display = 'inline-flex';
+                box.appendChild(div);
+            });
+        }
+
+        function updateSectionRow(el) {
+            const row = el.closest('.section-editor');
+            const type = row.querySelector('.sec-type').value;
+            row.querySelector('.sec-text').style.display = ['center','line','separator','items','barcode','qr'].includes(type) ? '' : 'none';
+            row.querySelector('.sec-right').style.display = type === 'line' ? '' : 'none';
+            row.querySelector('.sec-size').style.display = type === 'center' ? '' : 'none';
+            row.querySelector('.sec-lines').style.display = type === 'feed' ? 'inline-block' : 'none';
+            const bw = row.querySelector('.sec-bold');
+            bw.closest('label').style.display = ['center','line'].includes(type) ? 'inline-flex' : 'none';
+        }
+
+        function addSection() {
+            const box = document.getElementById('sectionsEditor');
+            const div = document.createElement('div');
+            div.className = 'section-editor';
+            div.innerHTML = `
+                <div class="sec-row">
+                    <select class="sec-type" onchange="updateSectionRow(this)">
+                        ${['center','line','separator','items','feed','cut','barcode','qr'].map(t => `<option value="${t}" ${t === 'line' ? 'selected' : ''}>${t}</option>`).join('')}
+                    </select>
+                    <input type="text" class="sec-text" placeholder="texto / placeholder">
+                    <input type="text" class="sec-right" placeholder="derecha (line)" style="display:none">
+                    <select class="sec-size" style="display:none">
+                        <option value="1,1">Normal</option><option value="2,2">Doble</option><option value="1,2">Alto</option><option value="2,1">Ancho</option>
+                    </select>
+                    <input type="number" class="sec-lines" value="1" style="display:none">
+                    <div class="sec-row" style="margin-left:auto;">
+                        <label class="check" style="font-weight:400;margin:0;display:none;"><input type="checkbox" class="sec-bold"> Negrita</label>
+                        <button class="sec-move" onclick="moveSection(this, -1)">↑</button>
+                        <button class="sec-move" onclick="moveSection(this, 1)">↓</button>
+                        <button class="sec-remove" onclick="removeSection(this)">✕</button>
+                    </div>
+                </div>
+            `;
+            box.appendChild(div);
+            updateSectionRow(div.querySelector('.sec-type'));
+        }
+
+        function moveSection(btn, dir) {
+            const rows = [...document.querySelectorAll('#sectionsEditor .section-editor')];
+            const row = btn.closest('.section-editor');
+            const idx = rows.indexOf(row);
+            const target = idx + dir;
+            if (target < 0 || target >= rows.length) return;
+            row.parentNode.insertBefore(row, rows[target].nextSibling || (dir < 0 ? rows[target] : null));
+            // re-normalizar
+        }
+
+        function removeSection(btn) {
+            btn.closest('.section-editor').remove();
+        }
+
+        function collectSections() {
+            const sections = [];
+            document.querySelectorAll('#sectionsEditor .section-editor').forEach(row => {
+                const type = row.querySelector('.sec-type').value;
+                const sec = { type };
+                const txt = row.querySelector('.sec-text');
+                const right = row.querySelector('.sec-right');
+                const size = row.querySelector('.sec-size');
+                const lines = row.querySelector('.sec-lines');
+                const bold = row.querySelector('.sec-bold');
+                const bwWrap = bold ? bold.closest('label') : null;
+                if (['center','line','separator','items','barcode','qr'].includes(type)) sec.text = txt.value;
+                if (type === 'line') sec.right = right.value;
+                if (type === 'center' && size && size.value !== '1,1') sec.size = size.value.split(',').map(Number);
+                if (type === 'feed') sec.lines = parseInt(lines.value) || 1;
+                if (['center','line'].includes(type) && bold && bold.checked) sec.bold = true;
+                sections.push(sec);
+            });
+            return sections;
+        }
+
+        async function saveEditing() {
+            const key = document.getElementById('editKey').value;
+            const template = {
+                name: document.getElementById('edit_name').value || key,
+                description: (TEMPLATES[key] || {}).description || '',
+                line_width: parseInt(document.getElementById('edit_line_width').value) || 42,
+                width: TICKET_WIDTH,
+                sections: collectSections()
+            };
+            const { ok, data } = await api('/api/templates/' + key, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ template })
+            });
+            const msg = document.getElementById('editMsg');
+            showMsg(msg, ok ? 'Plantilla guardada ✔' : 'Error: ' + data.message, !ok);
+            if (ok) {
+                log('Plantilla guardada: ' + key);
+                loadTemplates();
+            }
+        }
+
+        async function resetEditing() {
+            const key = document.getElementById('editKey').value;
+            const { ok, data } = await api('/api/templates/reset/' + key, { method: 'POST' });
+            const msg = document.getElementById('editMsg');
+            showMsg(msg, ok ? 'Plantilla restaurada ✔' : 'Error: ' + data.message, !ok);
+            if (ok) {
+                log('Plantilla restaurada: ' + key);
+                await loadTemplates();
+                openEditor();
+            }
+        }
+
+        async function previewEditing() {
+            const key = document.getElementById('editKey').value;
+            const tpl = (TEMPLATES[key] || {}).template;
+            if (!tpl) return;
+            computeTotals();
+            const payload = {
+                template: key,
+                line_width: parseInt(document.getElementById('edit_line_width').value) || 42,
+                data: collectTicketData()
+            };
+            const { ok, data } = await api('/api/tickets/preview', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            });
+            const pv = document.getElementById('ticketPreview');
+            pv.textContent = ok ? data.text : ('Error: ' + data.message);
+            log(ok ? 'Vista previa (editando) generada' : 'Error vista previa edición');
+        }
+
+        // Inicialización
+        resetTicketForm();
+        loadTemplates();
+        refreshStatus();
+    </script>
+</body>
+</html>

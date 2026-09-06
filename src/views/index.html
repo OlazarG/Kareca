@@ -389,7 +389,8 @@
             <a href="#" onclick="showSection('salarios')" id="nav-salarios"><i class="bi bi-cash-coin me-2"></i>Salarios</a>
             <a href="#" onclick="showSection('users')" id="nav-users"><i class="bi bi-person-gear me-2"></i>Usuarios</a>
             <a href="#" onclick="showTicketEditorWithPermissionCheck()" id="nav-ticket" style="display:none;"><i class="bi bi-receipt-cutoff me-2"></i>Editor de Ticket</a>
-            
+            <a href="#" onclick="promptClockOffset()" id="nav-clock-offset" style="display:none;"><i class="bi bi-clock-history me-2"></i>Ajustar Reloj de la App</a>
+
             <!-- User Info & Logout at bottom of Sidebar -->
             <div class="mt-auto p-3 border-top border-secondary bg-dark">
                 <div class="d-flex align-items-center mb-2">
@@ -1534,7 +1535,7 @@
                 </div>
             </div>
         </div>
-        </div>
+
 <!-- Ticket (Editor de Formatos) Section -->
     <div id="ticket-section" style="display:none;">
         <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
@@ -2073,9 +2074,9 @@
     <!-- QZ Tray Print Service -->
     <script src="./qzPrint.js"></script>
     <!-- API Bridge Script -->
-    <script src="./api.js?v=2.5"></script>
+    <script src="./api.js?v=2.6"></script>
     <!-- Renderer Script -->
-    <script src="./renderer.js?v=2.11"></script>
+    <script src="./renderer.js?v=2.16"></script>
 </body>
 
 </html>

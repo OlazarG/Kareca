@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Ticket 80mm - {{ store_name }}</title>
+    <style>
+        * { box-sizing: border-box; }
+        @page { margin: 0; size: {{ paper_width }}mm auto; }
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            line-height: 1.2;
+            color: #000;
+            background-color: #fff;
+            width: {{ body_width }}mm;
+            margin: 0 auto;
+            padding: 4mm;
+        }
+        .header { text-align: center; margin-bottom: 10px; }
+        .logo {
+            width: 60px; height: 60px; border-radius: 50%; object-fit: cover;
+            margin-bottom: 5px;
+            filter: grayscale(100%) contrast(1.2);
+        }
+        .store-name { font-weight: bold; font-size: 15px; margin-bottom: 2px; }
+        .store-info { font-size: 11px; margin-bottom: 2px; }
+        .barcode {
+            text-align: center; margin: 10px 0;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 18px; letter-spacing: 2px; font-weight: bold;
+        }
+        .ticket-details { margin-bottom: 10px; font-size: 11px; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 10px; }
+        th, td { padding: 4px 0; text-align: left; }
+        th { border-bottom: 1px dashed #000; border-top: 1px dashed #000; font-weight: bold; }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        .totals { width: 100%; font-size: 12px; margin-bottom: 10px; }
+        .totals td { padding: 3px 0; }
+        .divider { border-top: 1px dashed #000; margin: 8px 0; }
+        .footer { text-align: center; font-size: 10px; margin-top: 15px; }
+        .qr-code { text-align: center; margin-top: 8px; }
+        .qr-code img { width: 75px; height: 75px; filter: grayscale(100%); }
+        @media print { body { width: 100%; padding: 0 2mm; } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        {% if logo_url %}<img src="{{ logo_url }}" alt="Logo" class="logo">{% endif %}
+        <div class="store-name">{{ store_name }}</div>
+        <div class="store-info">{{ store_subtitle }}</div>
+        <div class="store-info">{{ store_address }}</div>
+    </div>
+
+    <div class="barcode">
+        *{{ barcode }}*
+    </div>
+
+    <div class="ticket-details">
+        <div><strong>Ticket num:</strong> {{ ticket_num }}</div>
+        <div><strong>Fecha:</strong> {{ date }}</div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 50%;">Descripción</th>
+                <th class="text-right">PVP</th>
+                <th class="text-center">Cant</th>
+                <th class="text-right">Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>{{ item.name }}</td>
+                <td class="text-right">{{ item.price }}</td>
+                <td class="text-center">{{ item.qty }}</td>
+                <td class="text-right">{{ item.total }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <table class="totals">
+        <tr>
+            <td style="width: 50%;"></td>
+            <td class="text-right">Subtotal</td>
+            <td class="text-right">{{ subtotal }}</td>
+        </tr>
+        <tr>
+            <td></td>
+            <td class="text-right">IVA {{ iva_pct }}%</td>
+            <td class="text-right">{{ iva_amount }}</td>
+        </tr>
+        <tr>
+            <td></td>
+            <td class="text-right"><strong>Total</strong></td>
+            <td class="text-right"><strong>{{ total }}</strong></td>
+        </tr>
+    </table>
+
+    <div class="divider"></div>
+
+    <div class="ticket-details">
+        <div><strong>Forma de pago</strong></div>
+        <div>{{ method }}</div>
+        {% if method == 'Efectivo' or method == 'EFECTIVO' %}
+        <table style="margin-top: 4px; margin-bottom: 0;">
+            <tr>
+                <td>Entregado</td>
+                <td class="text-right">{{ received }}</td>
+            </tr>
+            <tr>
+                <td>Cambio</td>
+                <td class="text-right">{{ change }}</td>
+            </tr>
+        </table>
+        {% endif %}
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="footer">
+        {{ footer }}
+        {% if qr_url %}
+        <div class="qr-code">
+            <img src="{{ qr_url }}" alt="QR Code">
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

@@ -501,6 +501,19 @@ async function initDatabase() {
             ON CONFLICT DO NOTHING
         `);
 
+        // New permission: ajustar_reloj_app (idempotent for existing installations)
+        await client.query(`
+            INSERT INTO permissions (name, description)
+            VALUES ('ajustar_reloj_app', 'Puede ajustar el reloj general de la app (afecta ticket impreso y reportes)')
+            ON CONFLICT (name) DO NOTHING
+        `);
+        await client.query(`
+            INSERT INTO role_permissions (role_id, permission_id)
+            SELECT r.id, p.id FROM roles r, permissions p
+            WHERE r.name = 'Administrador' AND p.name = 'ajustar_reloj_app'
+            ON CONFLICT DO NOTHING
+        `);
+
         // Seed Admin User
         const checkUsers = await client.query('SELECT COUNT(*) FROM users');
         if (parseInt(checkUsers.rows[0].count) === 0) {

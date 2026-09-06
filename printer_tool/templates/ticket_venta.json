@@ -1,0 +1,13 @@
+{
+  "name": "ticket_venta",
+  "description": "Ticket estándar para punto de venta (80mm / 58mm).",
+  "line_width": 42,
+  "width": 384,
+  "sections": [
+    {
+      "type": "line",
+      "text": "",
+      "right": ""
+    }
+  ]
+}

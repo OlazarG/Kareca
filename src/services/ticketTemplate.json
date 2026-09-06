@@ -1,0 +1,138 @@
+{
+  "name": "Factura",
+  "description": "Factura con IVA y datos del cliente (compatible con el sistema principal).",
+  "width": 576,
+  "line_width": 64,
+  "sections": [
+    {
+      "type": "image",
+      "image": "C:\\Users\\Gustavo Olazar\\Documents\\GustavoOlazar\\cafeteria\\Kareca\\src\\services\\images\\ticket_1788681793998_fb8j448om.png",
+      "maxWidth": "100"
+    },
+    {
+      "type": "center",
+      "text": "CERAMICA CAFE",
+      "size": [
+        2,
+        2
+      ],
+      "bold": true
+    },
+    {
+      "type": "center",
+      "text": "Cafe con Esencia Artesanal",
+      "bold": false
+    },
+    {
+      "type": "center",
+      "text": "FACTURA",
+      "bold": true
+    },
+    {
+      "type": "center",
+      "text": "RUC: {{store_ruc}}",
+      "bold": false,
+      "if": "{{store_ruc}}"
+    },
+    {
+      "type": "center",
+      "text": "{{store_phone}}",
+      "bold": false
+    },
+    {
+      "type": "separator",
+      "text": "{{dashes}}"
+    },
+    {
+      "type": "line",
+      "text": "Factura #{{ticket_num}}",
+      "right": "{{date}}",
+      "bold": true
+    },
+    {
+      "type": "line",
+      "text": "Cliente",
+      "right": "{{client_name}}",
+      "bold": false,
+      "if": "{{client_name}}"
+    },
+    {
+      "type": "line",
+      "text": "RUC/CI",
+      "right": "{{client_ruc}}",
+      "bold": false,
+      "if": "{{client_ruc}}"
+    },
+    {
+      "type": "separator",
+      "text": "{{dashes}}"
+    },
+    {
+      "type": "items",
+      "caption": "Descripcion   Cant                                      Importe"
+    },
+    {
+      "type": "separator",
+      "text": "{{dashes}}"
+    },
+    {
+      "type": "line",
+      "text": "SUBTOTAL",
+      "right": "{{subtotal}}",
+      "bold": true
+    },
+    {
+      "type": "line",
+      "text": "IVA ({{iva_pct}})",
+      "right": "{{iva_amount}}",
+      "bold": false
+    },
+    {
+      "type": "line",
+      "text": "TOTAL",
+      "right": "{{total}}",
+      "bold": true
+    },
+    {
+      "type": "separator",
+      "text": "{{dashes}}"
+    },
+    {
+      "type": "line",
+      "text": "Metodo",
+      "right": "{{method}}",
+      "bold": false,
+      "if": "{{method}}"
+    },
+    {
+      "type": "line",
+      "text": "Efectivo",
+      "right": "{{received}}",
+      "bold": false,
+      "if": "{{method}} == Efectivo"
+    },
+    {
+      "type": "line",
+      "text": "Vuelto",
+      "right": "{{change}}",
+      "bold": false,
+      "if": "{{method}} == Efectivo"
+    },
+    {
+      "type": "separator",
+      "text": "{{dashes}}"
+    },
+    {
+      "type": "center",
+      "text": "{{footer}}",
+      "bold": true
+    },
+    {
+      "type": "feed",
+      "lines": 4
+    },
+    {
+      "type": "cut"
+    }
+  ]
+}

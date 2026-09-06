@@ -15,6 +15,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveExportWord: (data, from, to) => ipcRenderer.invoke('save-export-word', data, from, to),
     printTicket: (data) => ipcRenderer.invoke('print-ticket', data),
 
+    // Ticket Template Editor
+    getTicketTemplate: () => ipcRenderer.invoke('get-ticket-template'),
+    saveTicketTemplate: (template) => ipcRenderer.invoke('save-ticket-template', template),
+    resetTicketTemplate: () => ipcRenderer.invoke('reset-ticket-template'),
+    previewTicket: (template, data) => ipcRenderer.invoke('preview-ticket', template, data),
+    getTicketImage: (imagePath) => ipcRenderer.invoke('get-ticket-image', imagePath),
+    uploadTicketImage: (dataUrl) => ipcRenderer.invoke('upload-ticket-image', dataUrl),
+    getClockOffset: () => ipcRenderer.invoke('get-clock-offset'),
+    saveClockOffset: (minutes) => ipcRenderer.invoke('save-clock-offset', minutes),
+
     // Cash Register
     getRegisterStatus: () => ipcRenderer.invoke('get-register-status'),
     openRegister: (amount, user) => ipcRenderer.invoke('open-register', amount, user),

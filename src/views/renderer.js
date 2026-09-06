@@ -51,7 +51,7 @@ function setupCurrencyInputs() {
     });
 }
 
-function getLocalDateStr(date = new Date()) {
+function getLocalDateStr(date = appNow()) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
@@ -138,6 +138,29 @@ async function promptCreateCategory() {
 // --- User Authentication State ---
 let currentUser = null;
 
+// --- Reloj general de la app (corrige hora/fecha del sistema si está mal) ---
+let clockOffsetMinutes = 0;
+
+async function loadClockOffset() {
+    try {
+        const res = await window.electronAPI.getClockOffset();
+        if (res && res.success) clockOffsetMinutes = res.offsetMinutes || 0;
+    } catch (e) {
+        console.error('getClockOffset', e);
+    }
+}
+
+// "Ahora" corregido según el ajuste configurado.
+function appNow() {
+    return new Date(Date.now() + clockOffsetMinutes * 60000);
+}
+
+// Corrige una fecha/hora ya guardada (ej: viene de la base de datos) aplicando
+// el mismo ajuste, para que quede consistente con appNow().
+function correctDate(value) {
+    return new Date(new Date(value).getTime() + clockOffsetMinutes * 60000);
+}
+
 // Handle Login Form Submission
 document.getElementById('login-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -205,6 +228,7 @@ document.getElementById('login-form')?.addEventListener('submit', async (e) => {
 
             // Apply permissions (hide forbidden links / modules)
             applyRolePermissions();
+            loadClockOffset();
 
             // Load initial view
             showSection('dashboard');
@@ -302,7 +326,8 @@ function applyRolePermissions() {
         'nav-clients': perms.includes('gestionar_clientes'),
         'nav-salarios': perms.includes('gestionar_salarios'),
         'nav-users': perms.includes('gestionar_usuarios'),
-        'nav-ticket': perms.includes('editar_ticket_template')
+        'nav-ticket': perms.includes('editar_ticket_template'),
+        'nav-clock-offset': perms.includes('ajustar_reloj_app')
     };
 
     // Toggle navigation links visibility
@@ -365,7 +390,7 @@ async function loadDashboard() {
     const dashDate = document.getElementById('dash-date');
     if (dashDate) {
         const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-        dashDate.innerText = new Date().toLocaleDateString('es-PY', options);
+        dashDate.innerText = appNow().toLocaleDateString('es-PY', options);
     }
 
     try {
@@ -1353,7 +1378,7 @@ async function loadReports(page = 1) {
             if (m.type === 'INGRESO' || m.type === 'APERTURA') runningBalance += amount;
             else if (m.type === 'EGRESO') runningBalance -= amount;
 
-            const dateObj = new Date(m.date);
+            const dateObj = correctDate(m.date);
             const dateStr = dateObj.toLocaleDateString('es-PY');
             const timeStr = dateObj.toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' });
 
@@ -1680,7 +1705,7 @@ async function processSale() {
                     iva_pct: '10',
                     total: currentTotal,
                     method: paymentData.method,
-                    date: new Date().toLocaleString('es-PY'),
+                    date: appNow().toLocaleString('es-PY'),
                     received: paymentData.received,
                     change: paymentData.change,
                     clientName: clientName,
@@ -1747,7 +1772,7 @@ async function processSale() {
                     iva_pct: '10',
                     total: saleData.total,
                     method: saleData.method,
-                    date: new Date().toLocaleString('es-PY'),
+                    date: appNow().toLocaleString('es-PY'),
                     received: saleData.received,
                     change: saleData.change,
                     clientName: window.selectedCheckoutClient ? window.selectedCheckoutClient.razon_social : clientName,
@@ -1870,7 +1895,7 @@ async function loadPosHistory() {
 
         // Descending order (newest first)
         sales.reverse().forEach(m => {
-            const dateObj = new Date(m.date);
+            const dateObj = correctDate(m.date);
             const timeStr = dateObj.toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' });
 
             const total = parseInt(m.amount);
@@ -1923,7 +1948,7 @@ async function loadCajaSection() {
 
             // Fetch movements
             // session.opened_at might be a Date object from PG
-            const openedAt = new Date(session.opened_at);
+            const openedAt = correctDate(session.opened_at);
             const dateStr = getLocalDateStr(openedAt); // Safe conversion
             const response = await window.electronAPI.getMovements(dateStr, dateStr, 1, 1000);
             const movements = response.rows || [];
@@ -1942,8 +1967,8 @@ async function loadCajaSection() {
                 // Actually closeRegister backend logic handles strictly >= opened_at. 
                 // We should replicate roughly here or ask backend for stats?
                 // Replicating roughly:
-                const mDate = new Date(m.date);
-                const sDate = new Date(session.opened_at);
+                const mDate = correctDate(m.date);
+                const sDate = correctDate(session.opened_at);
                 if (mDate < sDate) return;
 
                 const amt = parseInt(m.amount);
@@ -2272,7 +2297,7 @@ async function reprintTicket(id) {
             items: items,
             total: sale.amount,
             method: sale.payment_method,
-            date: new Date(sale.date).toLocaleString('es-PY'),
+            date: correctDate(sale.date).toLocaleString('es-PY'),
             received: received,
             change: change,
             voucherNumber: sale.voucher_number || ''
@@ -4287,7 +4312,7 @@ async function loadUsers() {
                 ? '<span class="badge bg-success">Activo</span>' 
                 : '<span class="badge bg-danger">Inactivo</span>';
 
-            const createdDate = new Date(u.created_at).toLocaleString('es-PY');
+            const createdDate = correctDate(u.created_at).toLocaleString('es-PY');
 
             const row = `
                 <tr>
@@ -4527,20 +4552,46 @@ function ticketPaperIdFor(width, lineWidth) {
     return null;
 }
 
-async function showTicketEditorWithPermissionCheck() {
-    try {
-        const response = await fetch('/api/auth/check-permission?permission=editar_ticket_template');
-        const data = await response.json();
+async function promptClockOffset() {
+    const perms = (currentUser && currentUser.permissions) || [];
+    if (!perms.includes('ajustar_reloj_app')) {
+        Swal.fire('Acceso Denegado', 'No tienes permiso para ajustar el reloj de la app.', 'warning');
+        return;
+    }
 
-        if (data.success && data.hasPermission) {
-            showSection('ticket');
-            loadTicketSection();
+    const { value: minutes } = await Swal.fire({
+        title: 'Ajustar Reloj de la App',
+        html: 'Si la hora/fecha del sistema está mal y afecta al ticket impreso y a los reportes, indicá acá la corrección en minutos (podés usar valores negativos). Se aplica a toda la app.',
+        input: 'number',
+        inputValue: clockOffsetMinutes,
+        inputLabel: 'Minutos a sumar (negativo para restar)',
+        showCancelButton: true,
+        confirmButtonText: 'Guardar',
+        cancelButtonText: 'Cancelar'
+    });
+
+    if (minutes === undefined) return;
+
+    try {
+        const res = await window.electronAPI.saveClockOffset(Number(minutes));
+        if (res && res.success) {
+            clockOffsetMinutes = Number(minutes);
+            Swal.fire({ title: 'Guardado', text: 'El ajuste ya se está aplicando en toda la app.', icon: 'success', timer: 1600, showConfirmButton: false });
         } else {
-            Swal.fire('Acceso Denegado', 'No tienes permiso para acceder al editor de tickets.', 'warning');
+            Swal.fire('Error', (res && res.error) || 'No se pudo guardar el ajuste.', 'error');
         }
     } catch (e) {
-        console.error('Error verificando permiso:', e);
-        Swal.fire('Error', 'No se pudo verificar los permisos.', 'error');
+        Swal.fire('Error', 'No se pudo guardar el ajuste: ' + e.message, 'error');
+    }
+}
+
+function showTicketEditorWithPermissionCheck() {
+    const perms = (currentUser && currentUser.permissions) || [];
+    if (perms.includes('editar_ticket_template')) {
+        showSection('ticket');
+        loadTicketSection();
+    } else {
+        Swal.fire('Acceso Denegado', 'No tienes permiso para acceder al editor de tickets.', 'warning');
     }
 }
 
@@ -4839,12 +4890,7 @@ function processImageFile(file) {
 }
 
 function uploadTicketImage(dataUrl) {
-    fetch('/api/ticket/upload-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataUrl })
-    })
-    .then(res => res.json())
+    window.electronAPI.uploadTicketImage(dataUrl)
     .then(data => {
         if (data.success && data.path) {
             addTicketImageSection(data.path);
@@ -5086,7 +5132,7 @@ async function printTicketFromEditor() {
         template: JSON.parse(JSON.stringify(ticketTemplate)),
         lineWidth: Number(ticketTemplate.line_width) || 42
     });
-    ticketData.date = new Date().toLocaleString('es-PY');
+    ticketData.date = appNow().toLocaleString('es-PY');
     const res = await window.electronAPI.printTicket(ticketData);
     if (res && res.success) {
         const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 1500, timerProgressBar: true });

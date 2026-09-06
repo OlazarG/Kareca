@@ -1414,8 +1414,8 @@ async function closeTabAndProcessSale(tabId, paymentData) {
             });
         }
 
-        const motiveString = saleItems.map(i => `${i.name} (${i.variant_name || 'Estándar'}) x${i.qty}`).join(', ') + 
-            (paymentData.observation ? ` - Obs: ${paymentData.observation}` : '') + ` - Mesa: ${tab.table_id ? tab.table_id : 'Sin mesa'}`;
+        const motiveString = saleItems.map(i => `${i.name} (${i.variant_name || 'Estándar'}) x${i.qty}`).join(', ') +
+            (paymentData.observation ? ` - Obs: ${paymentData.observation}` : '') + (tab.table_id ? ` [Mesa ${tab.table_id}]` : '');
 
         const insertMovementQuery = `
             INSERT INTO movements (type, description, motive, user_name, payment_method, amount, details_json, voucher_number)

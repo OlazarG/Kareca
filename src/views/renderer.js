@@ -4548,7 +4548,13 @@ async function loadTicketSection() {
     try {
         const verEl = document.getElementById('ticket-version-label');
         if (verEl) verEl.textContent = 'v' + TICKET_EDITOR_VERSION;
-        const res = await window.electronAPI.getTicketTemplate();
+        let res;
+        if (window.electronAPI && window.electronAPI.getTicketTemplate) {
+            res = await window.electronAPI.getTicketTemplate();
+        } else {
+            const response = await fetch('/api/ticket/template');
+            res = await response.json();
+        }
         if (res && res.success && res.template) {
             ticketTemplate = res.template;
         } else {

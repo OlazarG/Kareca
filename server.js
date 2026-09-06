@@ -69,6 +69,8 @@ const tabsRouter = require('./src/routes/tabs');
 const usersRouter = require('./src/routes/users');
 const exportsRouter = require('./src/routes/exports');
 const salariesRouter = require('./src/routes/salaries');
+const printRouter = require('./src/routes/print');
+const ticketTemplateRouter = require('./src/routes/ticketTemplate');
 
 app.use('/api/auth', authRouter);
 app.use('/api/products', productsRouter);
@@ -81,6 +83,8 @@ app.use('/api/tabs', tabsRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/exports', exportsRouter);
 app.use('/api/salaries', salariesRouter);
+app.use('/api/print', printRouter);
+app.use('/api/ticket', ticketTemplateRouter);
 
 app.get('/api/health', (req, res) => {
     res.json({ success: true, status: 'ok' });

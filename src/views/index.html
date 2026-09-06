@@ -290,6 +290,45 @@
             .sidebar-backdrop.open { display: block; }
             .content-area { padding: 12px; }
         }
+
+        /* Ticket editor: preview paper & receipt simulation */
+        .ticket-paper {
+            background: #fff;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+            padding: 14px 12px;
+            margin: 8px 0;
+        }
+        .ticket-preview {
+            font-family: 'Courier New', Consolas, monospace;
+            font-weight: 500;
+            white-space: pre;
+            line-height: 1.35;
+            color: #000;
+            text-align: left;
+            overflow-x: hidden;
+            max-width: 100%;
+        }
+        .ticket-preview img {
+            max-width: 100%;
+            padding: 2px 0;
+        }
+        .ticket-section-card {
+            border-left: 3px solid #6c757d;
+        }
+        .ticket-section-card .form-label { font-size: 0.75rem; margin-bottom: 0.15rem; }
+        #ticket-image-dropzone {
+            transition: all 0.2s ease;
+            border: 2px dashed #ccc !important;
+            min-height: 60px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        #ticket-image-dropzone:hover {
+            background-color: #f8f9fa !important;
+            border-color: #6c757d !important;
+        }
     </style>
 </head>
 
@@ -299,7 +338,7 @@
     <div id="login-overlay">
         <div class="card card-custom login-card p-4 text-center shadow-lg">
             <div class="mb-4">
-                <i class="bi bi-shield-lock-fill text-primary login-icon"></i>
+                <img src="logo.png" alt="Logo" style="height: 120px; width: auto; object-fit: contain; margin-bottom: 1rem;">
                 <h3 class="fw-bold mt-2 login-title">Cerámica Café</h3>
                 <p class="text-muted">Inicia sesión para ingresar al sistema</p>
             </div>
@@ -332,7 +371,10 @@
             <button class="sidebar-close" onclick="toggleSidebar()" aria-label="Cerrar">
                 <i class="bi bi-x-lg"></i>
             </button>
-            <h4 class="text-center mb-4 text-white" style="letter-spacing: 2px; font-weight: 700;">Cerámica Café</h4>
+            <div class="text-center mb-4">
+                <img src="logo.png" alt="Logo" style="height: 80px; width: auto; object-fit: contain;">
+            </div>
+            <h4 class="text-center mb-4 text-white" style="letter-spacing: 2px; font-weight: 700; font-size: 0.95rem;">Cerámica Café</h4>
             <a href="#" onclick="showSection('dashboard')" id="nav-dashboard" class="active"><i
                     class="bi bi-speedometer2 me-2"></i>Dashboard</a>
             <a href="#" onclick="showSection('products')" id="nav-products"><i
@@ -346,6 +388,7 @@
             <a href="#" onclick="showSection('clients')" id="nav-clients"><i class="bi bi-people me-2"></i>Clientes</a>
             <a href="#" onclick="showSection('salarios')" id="nav-salarios"><i class="bi bi-cash-coin me-2"></i>Salarios</a>
             <a href="#" onclick="showSection('users')" id="nav-users"><i class="bi bi-person-gear me-2"></i>Usuarios</a>
+            <a href="#" onclick="showSection('ticket')" id="nav-ticket"><i class="bi bi-receipt-cutoff me-2"></i>Ticket</a>
             
             <!-- User Info & Logout at bottom of Sidebar -->
             <div class="mt-auto p-3 border-top border-secondary bg-dark">
@@ -1492,7 +1535,109 @@
             </div>
         </div>
         </div>
+<!-- Ticket (Editor de Formatos) Section -->
+    <div id="ticket-section" style="display:none;">
+        <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+            <div>
+                <h2 class="fw-bold text-dark"><i class="bi bi-receipt-cutoff me-2"></i>Editor de Ticket<span class="badge text-bg-info ms-2 align-middle" id="ticket-version-label"></span></h2>
+                <span class="text-muted">Personalizá el formato, tamaño, posición y fuentes del ticket térmico en tiempo real.</span>
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-secondary" onclick="addTicketSection()">
+                    <i class="bi bi-plus-lg me-1"></i>Agregar Sección
+                </button>
+                <button class="btn btn-warning" onclick="addTicketSectionTest()" title="Test: agrega la misma sección pero muestra un aviso al hacer clic">
+                    <i class="bi bi-plus-circle me-1"></i>Agregar (test)
+                </button>
+                <button class="btn btn-outline-primary" onclick="printTicketFromEditor()" title="Imprime el ticket con la plantilla actual (sin guardar)">
+                    <i class="bi bi-printer me-1"></i>Imprimir
+                </button>
+                <button class="btn btn-outline-danger" onclick="resetTicketTemplate()">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurar
+                </button>
+                <button class="btn btn-success" onclick="saveTicketTemplate()">
+                    <i class="bi bi-check-lg me-1"></i>Guardar
+                </button>
+            </div>
+        </div>
 
+        <div class="row g-4">
+            <!-- Left: configuration -->
+            <div class="col-lg-6">
+                <div class="card card-custom mb-3">
+                    <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
+                        <h6 class="card-title mb-0 fw-bold"><i class="bi bi-sliders me-1 text-primary"></i>Configuración del Rollo</h6>
+                        <span class="badge text-bg-secondary" id="ticket-paper-label">80mm</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">Tipo de Rollo</label>
+                                <select class="form-select" id="ticket-paper-select" onchange="onTicketPaperChange()">
+                                    <option value="80" data-width="384" data-line="42">80mm (384px)</option>
+                                    <option value="80hi" data-width="576" data-line="64">80mm Alta densidad (576px, 64c)</option>
+                                    <option value="58" data-width="280" data-line="32">58mm (280px)</option>
+                                </select>
+                                <div class="form-text">Ancho = puntos reales del rollo (576 para 80mm de alta densidad). Si el ticket impreso sale angosto, probá "80mm Alta densidad" y/o aumentá el ancho de línea.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">Ancho (píxeles)</label>
+                                <input type="number" class="form-control" id="ticket-width" min="200" max="832" oninput="onTicketGlobalChange()">
+                                <div class="form-text">Ancho físico de impresión en puntos.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">Ancho de línea (caracteres)</label>
+                                <input type="number" class="form-control" id="ticket-line-width" min="20" max="72" oninput="onTicketGlobalChange()">
+                                <div class="form-text">Cantidad de caracteres por línea del rollo.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card card-custom">
+                    <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
+                        <h6 class="card-title mb-0 fw-bold"><i class="bi bi-layers me-1 text-primary"></i>Secciones del Ticket</h6>
+                        <span class="badge text-bg-secondary" id="ticket-sec-count">0</span>
+                    </div>
+                    <div class="card-body p-2" id="ticket-sections-list" style="max-height: 50vh; overflow-y: auto;">
+                        <!-- Inyectado via JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: live preview -->
+            <div class="col-lg-6">
+                <div class="card card-custom">
+                    <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
+                        <h6 class="card-title mb-0 fw-bold"><i class="bi bi-eye me-1 text-primary"></i>Vista Previa en Tiempo Real</h6>
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="form-label mb-0 me-1 text-muted small" for="ticket-preview-scale">Zoom</label>
+                            <select class="form-select form-select-sm" id="ticket-preview-scale" onchange="updateTicketPreviewScale()" style="width:auto;">
+                                <option value="0.6">60%</option>
+                                <option value="0.8">80%</option>
+                                <option value="1" selected>100%</option>
+                                <option value="1.2">120%</option>
+                                <option value="1.5">150%</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card-body bg-secondary-subtle d-flex justify-content-center overflow-auto" id="ticket-preview-stage" style="max-height: 560px;">
+                        <div class="ticket-paper" id="ticket-paper">
+                            <pre class="ticket-preview mb-0" id="ticket-preview-text">Cargando&hellip;</pre>
+                        </div>
+                    </div>
+                    <div class="card-body bg-light border-top" id="ticket-image-dropzone" style="padding: 20px; text-align: center; border: 2px dashed #ccc; cursor: pointer;">
+                        <i class="bi bi-cloud-arrow-up me-2" style="font-size: 1.5rem; color: #6c757d;"></i>
+                        <p class="mb-1 text-muted">Arrastra una imagen aquí para agregarla al ticket</p>
+                        <small class="text-muted">o haz clic para seleccionar</small>
+                        <input type="file" id="ticket-image-file-input" accept="image/*" style="display: none;">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    
     </div>
     </div>
     </div>
@@ -1758,9 +1903,19 @@
                             <select class="form-select form-select-lg" id="payment-method"
                                 onchange="togglePaymentInputs()">
                                 <option value="Efectivo" selected>Efectivo</option>
+                                <option value="Tarjeta de Crédito">Tarjeta de Crédito</option>
+                                <option value="Tarjeta de Débito">Tarjeta de Débito</option>
                                 <option value="QR">QR</option>
                                 <option value="Transferencia">Transferencia</option>
                             </select>
+                        </div>
+
+                        <!-- POS Voucher Number (Tarjeta) -->
+                        <div class="mb-3" id="pos-voucher-section" style="display: none;">
+                            <label class="form-label">Número de Comprobante (POS)</label>
+                            <input type="text" class="form-control form-control-lg" id="pos-voucher-number"
+                                placeholder="Ej: 000123456" maxlength="20">
+                            <small class="text-muted">Número del recibo de la tarjeta (últimos 6 dígitos)</small>
                         </div>
 
                         <!-- Cash Section -->
@@ -1918,9 +2073,9 @@
     <!-- QZ Tray Print Service -->
     <script src="./qzPrint.js"></script>
     <!-- API Bridge Script -->
-    <script src="./api.js?v=2.3"></script>
+    <script src="./api.js?v=2.5"></script>
     <!-- Renderer Script -->
-    <script src="./renderer.js?v=2.3"></script>
+    <script src="./renderer.js?v=2.11"></script>
 </body>
 
 </html>

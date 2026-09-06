@@ -6,6 +6,16 @@ Este documento es el plan — nada de esto se ejecuta hasta confirmar cada fase.
 
 ---
 
+## Estado actual (2026-09-06)
+
+- ✅ **Fase 2** hecha: `listen_addresses = '*'` aplicado y Postgres reiniciado sin caídas. SSL ya estaba `on` (certificado self-signed por defecto de Postgres — no se armó uno nuevo, ver nota en Fase 2).
+- ✅ **Fase 4** hecha: rol `kareca_remote` creado con permisos de lectura/escritura (sin CREATE/DROP/ALTER), incluyendo default privileges para tablas futuras. Contraseña generada y guardada (no repetida en este documento).
+- ✅ **Fase 5** hecha: `db.js` ya soporta `DB_SSL=true` (commit `e13add2`).
+- ⏳ **Nombre real de la base**: es `kareca_db` (minúscula), **no** `KARECA_DB` como se asumía en este documento originalmente — ajustar cualquier comando de acá abajo que diga `KARECA_DB`.
+- ⏳ **Pendiente, bloqueado por Fase 0**: todavía no tenemos la IP pública fija de la primera PC/local a migrar → falta la regla de `pg_hba.conf` (Fase 2.3) y la regla de firewall (Fase 3). Nada de esto expone la base todavía: sin esa regla en `pg_hba.conf`, ninguna IP remota puede autenticarse aunque el puerto estuviera abierto.
+
+---
+
 ## 0. Prerrequisito bloqueante: IP fija de cada local
 
 Este enfoque filtra el firewall por IP pública. **Antes de seguir, hay que confirmar que cada local tiene IP pública fija** (contratada como tal con el ISP). Si el local tiene IP dinámica (lo normal en planes hogareños/comerciales básicos en Paraguay), la regla de firewall se rompe apenas el ISP la cambie, y el POS de ese local se queda sin conexión sin aviso.
@@ -27,60 +37,51 @@ Si cada Electron ya tiene ventas/productos/clientes propios en su base local, ce
 
 En el droplet (donde ya corre Postgres para `server.js` vía PM2):
 
-1. **Habilitar SSL en Postgres** (obligatorio para este enfoque, los datos viajan por internet pública):
-   - Generar certificado (self-signed alcanza si no hay dominio propio, o vía `certbot` si el droplet tiene un dominio).
-   - En `postgresql.conf`: `ssl = on`, `ssl_cert_file`, `ssl_key_file`.
-2. **Escuchar en la interfaz pública**:
-   - `postgresql.conf`: `listen_addresses = '*'` (o la IP pública específica del droplet).
-3. **Reglas de acceso** en `pg_hba.conf`:
+1. ✅ **SSL en Postgres**: ya estaba `ssl = on` desde antes, usando el certificado self-signed que Postgres genera por defecto (`ssl-cert-snakeoil.pem`). El droplet también tiene un certificado real de Let's Encrypt (`certbot`, dominio `ceramicafe.org`), pero **no** se usó para Postgres: la clave privada de Let's Encrypt no es legible por el usuario `postgres` sin armar un hook de renovación aparte, y para esta escala no vale la pena esa complejidad extra. Con el self-signed + `rejectUnauthorized: false` en el cliente, la conexión va cifrada igual, solo no se verifica la identidad del server contra una CA — aceptable estando además detrás del firewall por IP.
+2. ✅ **Escuchar en la interfaz pública**: `listen_addresses = '*'` aplicado en `/etc/postgresql/16/main/postgresql.conf` (línea 60, estaba comentada usando el default `localhost`). Postgres reiniciado, PM2 no se cayó.
+3. ⏳ **Reglas de acceso** en `pg_hba.conf` — **pendiente, falta la IP**. Cuando la tengamos:
    - Una línea `hostssl` por cada IP pública de local, method `scram-sha-256`. Ejemplo:
      ```
-     hostssl  KARECA_DB  kareca_remote  <IP_LOCAL_1>/32  scram-sha-256
-     hostssl  KARECA_DB  kareca_remote  <IP_LOCAL_2>/32  scram-sha-256
+     hostssl  kareca_db  kareca_remote  <IP_LOCAL_1>/32  scram-sha-256
      ```
    - Nada de `0.0.0.0/0` — solo IPs explícitas.
-4. Reiniciar Postgres y verificar que sigue aceptando conexiones locales del propio droplet (para no romper `server.js`).
+   - Archivo: `/etc/postgresql/16/main/pg_hba.conf` (solo editable con `sudo`).
+4. Reiniciar Postgres (o `reload` alcanza para solo `pg_hba.conf`, a diferencia de `listen_addresses` que sí pidió restart completo) después de agregar la regla del punto 3.
 
-## 3. Firewall del droplet
+## 3. Firewall del droplet — pendiente, falta la IP
 
-- Preferir el **Cloud Firewall de DigitalOcean** (a nivel de panel, antes de que el tráfico llegue a la VM) como filtro principal, y `ufw` en el droplet como segunda capa.
-- Regla: puerto `5432/tcp` permitido **solo** desde las IPs públicas de los locales confirmadas en la Fase 0. Todo lo demás, denegado.
+- `ufw` ya está activo en el droplet (solo permite hoy 22, 80 y 443). Falta agregar:
+  ```
+  sudo ufw allow from <IP_LOCAL_1> to any port 5432 proto tcp
+  ```
+- Este proyecto no usa Cloud Firewall de DigitalOcean todavía (solo `ufw` local) — se puede sumar como capa extra más adelante, no es bloqueante.
 - Verificar que el puerto 5432 sigue bloqueado para cualquier otra IP (probar desde afuera antes de dar por cerrado este paso).
 
-## 4. Usuario de base de datos con permisos acotados
+## 4. Usuario de base de datos con permisos acotados ✅ hecho
 
-No reutilizar el rol que usa `server.js` (probablemente `postgres` o un superusuario, según `.env` actual). Crear un rol nuevo para las conexiones remotas de Electron:
+Rol `kareca_remote` ya creado (no se reutilizó `kareca_user`, que es el que usa `server.js`). Permisos otorgados:
 
 ```sql
 CREATE ROLE kareca_remote WITH LOGIN PASSWORD '...';
-GRANT CONNECT ON DATABASE "KARECA_DB" TO kareca_remote;
+GRANT CONNECT ON DATABASE "kareca_db" TO kareca_remote;
 GRANT USAGE ON SCHEMA public TO kareca_remote;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO kareca_remote;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO kareca_remote;
+ALTER DEFAULT PRIVILEGES FOR ROLE kareca_user IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO kareca_remote;
+ALTER DEFAULT PRIVILEGES FOR ROLE kareca_user IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO kareca_remote;
 ```
 
-Sin permisos de `CREATE`/`DROP`/`ALTER` — ese rol no debería poder tocar el esquema, solo leer/escribir filas.
+Sin permisos de `CREATE`/`DROP`/`ALTER` — este rol no puede tocar el esquema, solo leer/escribir filas. Las últimas dos líneas (`ALTER DEFAULT PRIVILEGES`) aseguran que tablas que `kareca_user` cree en el futuro también queden accesibles para `kareca_remote` automáticamente.
 
-## 5. Cambio de código necesario: soportar SSL en la conexión (`db.js`)
+## 5. Cambio de código: soportar SSL en la conexión (`db.js`) ✅ hecho
 
-Hoy `src/database/db.js` arma el `Pool` de `pg` sin ninguna opción `ssl`. Hace falta agregar soporte, controlado por variable de entorno para no romper el uso local (droplet↔droplet no necesita SSL, Electron↔droplet sí):
-
-```env
-DB_SSL=true
-```
+`src/database/db.js` ya soporta `DB_SSL=true` (commit `e13add2`):
 
 ```js
-const dbConfig = {
-    user: process.env.DB_USER || 'postgres',
-    host: process.env.DB_HOST || 'localhost',
-    database: process.env.DB_NAME || 'KARECA_DB',
-    password: ...,
-    port: Number(process.env.DB_PORT || 5432),
-    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
-};
+ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 ```
 
-(`rejectUnauthorized: false` alcanza para un certificado self-signed; si el droplet tiene certificado válido de una CA reconocida, se puede poner `true` para verificarlo de verdad.)
+`rejectUnauthorized: false` porque usamos el certificado self-signed de Postgres (ver Fase 2, punto 1).
 
 ## 6. Configurar cada Electron
 
@@ -91,7 +92,7 @@ DB_HOST=<IP o dominio del droplet>
 DB_PORT=5432
 DB_USER=kareca_remote
 DB_PASSWORD=<contraseña del rol kareca_remote>
-DB_NAME=KARECA_DB
+DB_NAME=kareca_db
 DB_SSL=true
 ```
 

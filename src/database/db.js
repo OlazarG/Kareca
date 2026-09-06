@@ -11,6 +11,7 @@ const dbConfig = {
     database: process.env.DB_NAME || 'KARECA_DB',
     password: typeof process.env.DB_PASSWORD === 'string' ? process.env.DB_PASSWORD : 'postgres',
     port: Number(process.env.DB_PORT || 5432),
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 };
 
 const pool = new Pool(dbConfig);

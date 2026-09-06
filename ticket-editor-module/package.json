@@ -1,0 +1,39 @@
+{
+  "name": "ticket-editor-module",
+  "version": "2.0.0",
+  "description": "Módulo independiente para editar plantillas de tickets térmicos con interfaz visual",
+  "main": "src/index.js",
+  "files": [
+    "src/",
+    "assets/",
+    "docs/",
+    "README.md",
+    "package.json"
+  ],
+  "keywords": [
+    "ticket",
+    "editor",
+    "thermal-printer",
+    "template",
+    "pos",
+    "receipt"
+  ],
+  "author": "Antigravity",
+  "license": "MIT",
+  "peerDependencies": {
+    "express": "^5.0.0",
+    "pg": "^8.0.0",
+    "bootstrap": "^5.0.0"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-repo/ticket-editor-module"
+  },
+  "bugs": {
+    "url": "https://github.com/your-repo/ticket-editor-module/issues"
+  },
+  "homepage": "https://github.com/your-repo/ticket-editor-module#readme"
+}
